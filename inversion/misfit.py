@@ -24,12 +24,11 @@ class NonLinearMisfit(with_metaclass(ABCMeta)):
         self.cached = cached
         if self.cached:
             self.predict = CachedMethod(self, 'predict')
-            self.residuals = CachedMethod(self, 'residuals')
             if hasattr(self, 'jacobian'):
                 self.jacobian = CachedMethod(self, 'jacobian')
 
     @abstractmethod
-    def predict(self, **kwargs):
+    def predict(self, *args, **kwargs):
         pass
 
     @abstractmethod
@@ -37,8 +36,10 @@ class NonLinearMisfit(with_metaclass(ABCMeta)):
         self.optimize(data=data, args, weights=None)
         return self
 
-    def residuals(self, data, **kwargs):
-        pred = self.predict(**kwargs)
+    def residuals(self, data, *args, **kwargs):
+        if 'p' not in kwargs:
+            kwargs['p'] = None
+        pred = self.predict(*args, **kwargs)
         assert data.shape == pred.shape, \ \
             "Data shape doesn't match auxiliary arguments."
         return data - pred
@@ -88,7 +89,7 @@ class NonLinearMisfit(with_metaclass(ABCMeta)):
         return val*self.scale
 
     def gradient(self, p, data, weights=None, **kwargs):
-        jacobian = self.jacobian(p, **kwargs)
+        jacobian = self.jacobian(p=p, **kwargs)
         if p is None:
             residuals = data
         else:
@@ -105,7 +106,7 @@ class NonLinearMisfit(with_metaclass(ABCMeta)):
         return grad
 
     def hessian(self, p, data, weights=None, **kwargs):
-        jacobian = self.jacobian(p, **kwargs)
+        jacobian = self.jacobian(p=p, **kwargs)
         if weights is None:
             hessian = safe_dot(jacobian.T, jacobian)
         else:
