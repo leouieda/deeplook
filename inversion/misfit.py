@@ -9,6 +9,7 @@ import scipy.sparse
 from fatiando.utils import safe_dot
 
 from . import optimization
+from .cache import CachedMethod
 
 
 class NonLinearMisfit(with_metaclass(ABCMeta)):
@@ -149,6 +150,8 @@ class LinearMisfit(NonLinearMisfit):
         if config is None:
             config = dict(method='linear')
         super().__init__(nparams=nparams, config=config)
+        if hasattr(self, 'jacobian'):
+            self.jacobian = CachedMethod(self, 'jacobian', ignored=['p'])
 
     @abstractmethod
     def predict(self):
