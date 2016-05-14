@@ -9,10 +9,13 @@ import scipy.sparse
 from fatiando.utils import safe_dot
 
 from . import optimization
-from .cache import CachedMethod
 
 
 class NonLinearMisfit(with_metaclass(ABCMeta)):
+
+    _no_gradient = ['acor']
+    _no_hessian = ['steepest']
+    _needs_both = ['newton', 'levmarq', 'linear']
 
     def __init__(self, nparams, config=None):
         self.nparams = nparams
@@ -51,23 +54,22 @@ class NonLinearMisfit(with_metaclass(ABCMeta)):
             g, H = self.evaluate(p=None, data=data, value=False, gradient=True,
                                  hessian=True, **kwargs)
             p, stats = optimizer(H, g, **config)
-        elif method in ['newton', 'levmarq']:
+        elif method in self._needs_both:
             def evaluate(p):
                 return self.evaluate(p, data=data, value=True, gradient=True,
                                      hessian=True, **kwargs)
             p, stats = optimizer(evaluate, **config)
-        elif method == 'steepest':
+        elif method in self._no_hessian:
             def evaluate(p):
                 return self.evaluate(p, data=data, value=True, gradient=True,
                                      **kwargs)
             p, stats = optimizer(evaluate, **config)
-        elif method == 'acor':
+        elif method in self._no_gradient:
             def evaluate(p):
                 return self.evaluate(p, data=data, value=True, **kwargs)
             p, stats = optimizer(evaluate, nparams=self.nparams, **config)
         self.p_ = p
         self.stats_ = stats
-        return self
 
     def copy(self, deep=False):
         if deep:
@@ -142,6 +144,7 @@ class NonLinearMisfit(with_metaclass(ABCMeta)):
         return self
 
 class LinearMisfit(NonLinearMisfit):
+
     def __init__(self, nparams, config=None):
         if config is None:
             config = dict(method='linear')
