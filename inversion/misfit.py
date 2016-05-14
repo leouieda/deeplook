@@ -56,15 +56,15 @@ class NonLinearMisfit(with_metaclass(ABCMeta)):
                 return self.evaluate(p, data=data, value=True, gradient=True,
                                      hessian=True, **kwargs)
             p, stats = optimizer(evaluate, **config)
-        elif self.fit_method == 'steepest':
+        elif method == 'steepest':
             def evaluate(p):
                 return self.evaluate(p, data=data, value=True, gradient=True,
                                      **kwargs)
             p, stats = optimizer(evaluate, **config)
-        elif self.fit_method == 'acor':
+        elif method == 'acor':
             def evaluate(p):
                 return self.evaluate(p, data=data, value=True, **kwargs)
-            p, stats = optimizer(evaluate, **config)
+            p, stats = optimizer(evaluate, nparams=self.nparams, **config)
         self.p_ = p
         self.stats_ = stats
         return self
@@ -114,7 +114,10 @@ class NonLinearMisfit(with_metaclass(ABCMeta)):
                 hess = safe_dot(jacobian.T, safe_dot(weights, jacobian))
             hess *= 2*self.scale
             output.append(hess)
-        return output
+        if len(output) == 1:
+            return output[0]
+        else:
+            return output
 
     def score(self, *args):
         data = args[-1]
@@ -133,6 +136,10 @@ class NonLinearMisfit(with_metaclass(ABCMeta)):
             self.fit(*args, weights=weights)
         return self
 
+    def config(self, method, **kwargs):
+        self._config = dict(method=method)
+        self._config.update(kwargs)
+        return self
 
 class LinearMisfit(NonLinearMisfit):
     def __init__(self, nparams, config=None):

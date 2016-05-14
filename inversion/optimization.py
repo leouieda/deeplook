@@ -23,8 +23,8 @@ def newton(evaluate, initial, maxit=30, tol=10 ** -5, precondition=True):
                  iterations=0,
                  objective=[])
     p = numpy.array(initial, dtype=numpy.float)
-    stats['objective'].append(misfit)
     misfit, grad, hess = evaluate(p)
+    stats['objective'].append(misfit)
     for iteration in xrange(maxit):
         if precondition:
             diag = numpy.abs(safe_diagonal(hess))
@@ -112,91 +112,8 @@ def levmarq(evaluate, initial, maxit=30, maxsteps=20, lamb=10, dlamb=2,
     return p, stats
 
 
-def steepest(gradient, value, initial, maxit=1000, linesearch=True,
-             maxsteps=30, beta=0.1, tol=10**-5):
-    r"""
-    Minimize an objective function using the Steepest Descent method.
-
-    The increment to the initial estimate of the parameter vector
-    :math:`\bar{p}` is calculated by (Kelley, 1999)
-
-    .. math::
-
-        \Delta\bar{p} = -\lambda\bar{g}
-
-    where :math:`\lambda` is the step size and :math:`\bar{g}` is the gradient
-    vector.
-
-    The step size can be determined thought a line search algorithm using the
-    Armijo rule (Kelley, 1999). In this case,
-
-    .. math::
-
-        \lambda = \beta^m
-
-    where :math:`1 > \beta > 0` and :math:`m \ge 0` is an integer that controls
-    the step size. The line search finds the smallest :math:`m` that satisfies
-    the Armijo rule
-
-    .. math::
-
-        \phi(\bar{p} + \Delta\bar{p}) - \Gamma(\bar{p}) <
-        \alpha\beta^m ||\bar{g}(\bar{p})||^2
-
-    where :math:`\phi(\bar{p})` is the objective function evaluated at
-    :math:`\bar{p}` and :math:`\alpha = 10^{-4}`.
-
-    Parameters:
-
-    * gradient : function
-        A function that returns the gradient vector of the objective function
-        when given a parameter vector.
-    * value : function
-        A function that returns the value of the objective function evaluated
-        at a given parameter vector.
-    * initial : 1d-array
-        The initial estimate for the gradient descent.
-    * maxit : int
-        The maximum number of iterations allowed.
-    * linesearch : True or False
-        Whether or not to perform the line search to determine an optimal step
-        size.
-    * maxsteps : int
-        The maximum number of times to try to take a step before giving up.
-    * beta : float
-        The base factor used to determine the step size in line search
-        algorithm. Must be 1 > beta > 0.
-    * tol : float
-        The convergence criterion. The lower it is, the more steps are
-        permitted.
-
-    Yields:
-
-    * i, estimate, stats:
-        * i : int
-            The current iteration number
-        * estimate : 1d-array
-            The current estimated parameter vector
-        * stats : dict
-            Statistics about the optimization so far. Keys:
-
-            * method : stf
-                The name of the optimization algorithm
-            * iterations : int
-                The total number of iterations so far
-            * objective : list
-                Value of the objective function per iteration. First value
-                corresponds to the inital estimate
-            * step_attempts : list
-                Number of attempts at taking a step per iteration. First number
-                is zero, reflecting the initial estimate. Will be empty if
-                ``linesearch==False``.
-
-    References:
-
-    Kelley, C. T., 1999, Iterative methods for optimization: Raleigh: SIAM.
-
-    """
+def steepest(evaluate, initial, maxit=1000, linesearch=True, maxsteps=30,
+             beta=0.1, tol=10**-5):
     assert 1 > beta > 0, \
         "Invalid 'beta' parameter {}. Must be 1 > beta > 0".format(beta)
     stats = dict(method='Steepest Descent',
@@ -204,7 +121,7 @@ def steepest(gradient, value, initial, maxit=1000, linesearch=True,
                  objective=[],
                  step_attempts=[])
     p = numpy.array(initial, dtype=numpy.float)
-    misfit = value(p)
+    misfit, grad = evaluate(p)
     stats['objective'].append(misfit)
     if linesearch:
         stats['step_attempts'].append(0)
@@ -212,7 +129,6 @@ def steepest(gradient, value, initial, maxit=1000, linesearch=True,
     alpha = 10 ** (-4)
     stagnation = False
     for iteration in xrange(maxit):
-        grad = gradient(p)
         if linesearch:
             # Calculate now to avoid computing inside the loop
             gradnorm = numpy.linalg.norm(grad) ** 2
@@ -221,13 +137,13 @@ def steepest(gradient, value, initial, maxit=1000, linesearch=True,
             for i in xrange(maxsteps):
                 stepsize = beta**i
                 newp = p - stepsize*grad
-                newmisfit = value(newp)
+                newmisfit, newgrad = evaluate(newp)
                 if newmisfit - misfit < alpha*stepsize*gradnorm:
                     stagnation = False
                     break
         else:
             newp = p - grad
-            newmisfit = value(newp)
+            newmisfit, newgrad = evaluate(newp)
         if stagnation:
             stop = True
             warnings.warn(
@@ -240,13 +156,13 @@ def steepest(gradient, value, initial, maxit=1000, linesearch=True,
             stop = abs((newmisfit - misfit) / misfit) < tol
             p = newp
             misfit = newmisfit
+            grad = newgrad
             # Getting inside here means that I could take a step, so this is
             # where the yield goes.
             stats['objective'].append(misfit)
             stats['iterations'] += 1
             if linesearch:
                 stats['step_attempts'].append(i + 1)
-            yield iteration, p, copy.deepcopy(stats)
         if stop:
             break
     if iteration == maxit - 1:
@@ -255,64 +171,11 @@ def steepest(gradient, value, initial, maxit=1000, linesearch=True,
             + 'Might not have achieved convergence. '
             + 'Try inscreasing the maximum number of iterations allowed.',
             RuntimeWarning)
+    return p, stats
 
 
-def acor(value, bounds, nparams, nants=None, archive_size=None, maxit=1000,
+def acor(evaluate, bounds, nparams, nants=None, archive_size=None, maxit=1000,
          diverse=0.5, evap=0.85, seed=None):
-    """
-    Minimize the objective function using ACO-R.
-
-    ACO-R stands for Ant Colony Optimization for Continuous Domains (Socha and
-    Dorigo, 2008).
-
-    Parameters:
-
-    * value : function
-        Returns the value of the objective function at a given parameter vector
-    * bounds : list
-        The bounds of the search space. If only two values are given, will
-        interpret as the minimum and maximum, respectively, for all parameters.
-        Alternatively, you can given a minimum and maximum for each parameter,
-        e.g., for a problem with 3 parameters you could give
-        `bounds = [min1, max1, min2, max2, min3, max3]`.
-    * nparams : int
-        The number of parameters that the objective function takes.
-    * nants : int
-        The number of ants to use in the search. Defaults to the number of
-        parameters.
-    * archive_size : int
-        The number of solutions to keep in the solution archive. Defaults to
-        10 x nants
-    * maxit : int
-        The number of iterations to run.
-    * diverse : float
-        Scalar from 0 to 1, non-inclusive, that controls how much better
-        solutions are favored when constructing new ones.
-    * evap : float
-        The pheromone evaporation rate (evap > 0). Controls how spread out the
-        search is.
-    * seed : None or int
-        Seed for the random number generator.
-
-    Yields:
-
-    * i, estimate, stats:
-        * i : int
-            The current iteration number
-        * estimate : 1d-array
-            The current best estimated parameter vector
-        * stats : dict
-            Statistics about the optimization so far. Keys:
-
-            * method : stf
-                The name of the optimization algorithm
-            * iterations : int
-                The total number of iterations so far
-            * objective : list
-                Value of the objective function corresponding to the best
-                estimate per iteration.
-
-    """
     stats = dict(method="Ant Colony Optimization for Continuous Domains",
                  iterations=0,
                  objective=[])
@@ -333,8 +196,8 @@ def acor(value, bounds, nparams, nants=None, archive_size=None, maxit=1000,
         for i, bound in enumerate(bounds):
             low, high = bound
             archive[:, i] = numpy.random.uniform(low, high, archive_size)
-    # Compute the inital pheromone trail based on the objetive function value
-    trail = numpy.fromiter((value(p) for p in archive), dtype=numpy.float)
+    # Compute the initial pheromone trail based on the objective function value
+    trail = numpy.fromiter((evaluate(p) for p in archive), dtype=numpy.float)
     # Sort the archive of initial random solutions
     order = numpy.argsort(trail)
     archive = [archive[i] for i in order]
@@ -347,7 +210,7 @@ def acor(value, bounds, nparams, nants=None, archive_size=None, maxit=1000,
     weights /= numpy.sum(weights)
     for iteration in xrange(maxit):
         for k in xrange(nants):
-            # Sample the propabilities to produce new estimates
+            # Sample the probabilities to produce new estimates
             ant = numpy.empty(nparams, dtype=numpy.float)
             # 1. Choose a pdf from the archive
             pdf = numpy.searchsorted(
@@ -367,7 +230,7 @@ def acor(value, bounds, nparams, nants=None, archive_size=None, maxit=1000,
                         low, high = bounds[i]
                     if ant[i] >= low and ant[i] <= high:
                         break
-            pheromone = value(ant)
+            pheromone = evaluate(ant)
             # Place the new estimate in the archive
             place = numpy.searchsorted(trail, pheromone)
             if place == archive_size:
@@ -378,4 +241,4 @@ def acor(value, bounds, nparams, nants=None, archive_size=None, maxit=1000,
             archive.pop()
         stats['objective'].append(trail[0])
         stats['iterations'] += 1
-        yield iteration, archive[0], copy.deepcopy(stats)
+    return archive[0], stats
