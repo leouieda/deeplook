@@ -6,15 +6,22 @@ import numpy as np
 
 class CachedMethod(object):
 
-    def __init__(self, instance, method, ignored=None):
-        if ignored is None:
-            ignored = []
-        self.ignored = ignored
+    def __init__(self, instance, method, ignored=None, bypass=None,
+                 optional=None):
         self.instance = instance
         self.method = method
         meth = getattr(self.instance.__class__, self.method)
         setattr(self, '__doc__', getattr(meth, '__doc__'))
         self.reset()
+        if ignored is None:
+            ignored = []
+        self.ignored = ignored
+        if bypass is None:
+            bypass = []
+        self.bypass = bypass
+        if optional is None:
+            optional = []
+        self.optional = optional
 
     def reset(self):
         """
@@ -36,14 +43,23 @@ class CachedMethod(object):
             return True
         return False
 
+    def _call_from_instance(self, *args, **kwargs):
+        func = getattr(self.instance.__class__, self.method)
+        return func(self.instance, *args, **kwargs)
+
     def __call__(self, *args, **kwargs):
+        if any(i in kwargs and kwargs[i] is not None
+               for i in self.bypass):
+            return self._call_from_instance(*args, **kwargs)
+        for k in self.optional:
+            if k not in kwargs:
+                kwargs[k] = getattr(self.instance, '{}_'.format(k))
         arg_hashes = [hashlib.sha1(x).hexdigest()
                       for x in args if x is not None]
         kw_hashes = {k:hashlib.sha1(kwargs[k]).hexdigest()
                      for k in kwargs
                      if kwargs[k] is not None and k not in self.ignored}
         if self.cache is None or self._inputs_changed(arg_hashes, kw_hashes):
-            func = getattr(self.instance.__class__, self.method)
-            value = func(self.instance, *args, **kwargs)
+            value = self._call_from_instance(*args, **kwargs)
             self._update_cache(arg_hashes, kw_hashes, value)
         return self.cache

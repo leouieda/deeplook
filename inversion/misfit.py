@@ -26,6 +26,12 @@ class NonLinearMisfit(with_metaclass(ABCMeta)):
         if config is None:
             config = dict(method='levmarq', initial=np.zeros(nparams))
         self._config = config
+        self._set_cache()
+
+    def _set_cache(self):
+        self.predict = CachedMethod(self, 'predict')
+        if hasattr(self, 'jacobian'):
+            self.jacobian = CachedMethod(self, 'jacobian')
 
     @abstractmethod
     def predict(self):
@@ -52,23 +58,27 @@ class NonLinearMisfit(with_metaclass(ABCMeta)):
         config = {k:tmp[k] for k in tmp if k != 'method'}
         optimizer = getattr(optimization, method)
         if method == 'linear':
-            g, H = self.evaluate(p=None, data=data, value=False, gradient=True,
-                                 hessian=True, **kwargs)
-            p, stats = optimizer(H, g, **config)
+            gradient = self.gradient(p=None, data=data, **kwargs)
+            hessian = self.hessian(p=None, data=data, **kwargs)
+            p, stats = optimizer(gradient, hessian, **config)
         elif method in self._needs_both:
-            def evaluate(p):
-                return self.evaluate(p, data=data, value=True, gradient=True,
-                                     hessian=True, **kwargs)
-            p, stats = optimizer(evaluate, **config)
+            def value(p):
+                return self.value(p, data=data, **kwargs)
+            def gradient(p):
+                return self.gradient(p, data=data, **kwargs)
+            def hessian(p):
+                return self.hessian(p, data=data, **kwargs)
+            p, stats = optimizer(value, gradient, hessian, **config)
         elif method in self._no_hessian:
-            def evaluate(p):
-                return self.evaluate(p, data=data, value=True, gradient=True,
-                                     **kwargs)
-            p, stats = optimizer(evaluate, **config)
+            def value(p):
+                return self.value(p, data=data, **kwargs)
+            def gradient(p):
+                return self.gradient(p, data=data, **kwargs)
+            p, stats = optimizer(value, gradient, **config)
         elif method in self._no_gradient:
-            def evaluate(p):
-                return self.evaluate(p, data=data, value=True, **kwargs)
-            p, stats = optimizer(evaluate, nparams=self.nparams, **config)
+            def value(p):
+                return self.value(p, data=data, **kwargs)
+            p, stats = optimizer(value, nparams=self.nparams, **config)
         self.p_ = p
         self.stats_ = stats
 
@@ -78,49 +88,42 @@ class NonLinearMisfit(with_metaclass(ABCMeta)):
         else:
             return copy.copy(self)
 
-    def evaluate(self, p, data, value=True, gradient=False, hessian=False,
-                 weights=None, **kwargs):
-        # Calculate the value and jacobian only if they are required.
-        if value or (gradient and p is not None):
-            pred = self.predict(p=p, **kwargs)
-        if gradient or hessian:
-            jacobian = self.jacobian(p=p, **kwargs)
-        output = []
-        if value:
-            if weights is None:
-                val = np.linalg.norm(data - pred)**2
-            else:
-                r = data - pred
-                val = safe_dot(r.T, safe_dot(weights, r))
-            val *= self.scale
-            output.append(val)
-        if gradient:
-            if p is None:
-                residuals = data
-            else:
-                residuals = data - pred
-            if weights is None:
-                grad = safe_dot(jacobian.T, residuals)
-            else:
-                grad = safe_dot(jacobian.T, safe_dot(weights, residuals))
-            # Check if the gradient isn't a one column matrix
-            if len(grad.shape) > 1:
-                # Need to convert it to a 1d array so that hell won't break
-                # loose
-                grad = np.array(grad).ravel()
-            grad *= -2*self.scale
-            output.append(grad)
-        if hessian:
-            if weights is None:
-                hess = safe_dot(jacobian.T, jacobian)
-            else:
-                hess = safe_dot(jacobian.T, safe_dot(weights, jacobian))
-            hess *= 2*self.scale
-            output.append(hess)
-        if len(output) == 1:
-            return output[0]
+    def value(self, p, data, weights=None, **kwargs):
+        pred = self.predict(p=p, **kwargs)
+        if weights is None:
+            value = np.linalg.norm(data - pred)**2
         else:
-            return output
+            r = data - pred
+            value = safe_dot(r.T, safe_dot(weights, r))
+        value *= self.scale
+        return value
+
+    def gradient(self, p, data, weights=None, **kwargs):
+        jacobian = self.jacobian(p=p, **kwargs)
+        if p is None:
+            residuals = data
+        else:
+            residuals = data - self.predict(p=p, **kwargs)
+        if weights is None:
+            gradient = safe_dot(jacobian.T, residuals)
+        else:
+            gradient = safe_dot(jacobian.T, safe_dot(weights, residuals))
+        # Check if the gradient isn't a one column matrix
+        if len(gradient.shape) > 1:
+            # Need to convert it to a 1d array so that hell won't break
+            # loose
+            gradient = np.array(gradient).ravel()
+        gradient *= -2*self.scale
+        return gradient
+
+    def hessian(self, p, data, weights=None, **kwargs):
+        jacobian = self.jacobian(p=p, **kwargs)
+        if weights is None:
+            hessian = safe_dot(jacobian.T, jacobian)
+        else:
+            hessian = safe_dot(jacobian.T, safe_dot(weights, jacobian))
+        hessian *= 2*self.scale
+        return hessian
 
     def score(self, *args):
         data = args[-1]
@@ -150,8 +153,13 @@ class LinearMisfit(NonLinearMisfit):
         if config is None:
             config = dict(method='linear')
         super().__init__(nparams=nparams, config=config)
+
+    def _set_cache(self):
+        self.predict = CachedMethod(self, 'predict', optional=['p'])
         if hasattr(self, 'jacobian'):
             self.jacobian = CachedMethod(self, 'jacobian', ignored=['p'])
+            self.hessian = CachedMethod(self, 'hessian', ignored=['p'],
+                                        bypass=['weights'])
 
     @abstractmethod
     def predict(self):

@@ -7,7 +7,7 @@ import scipy.sparse
 from fatiando.utils import safe_solve, safe_diagonal, safe_dot
 
 
-def linear(hessian, gradient, precondition=True):
+def linear(gradient, hessian, precondition=True):
     if precondition:
         diag = numpy.abs(safe_diagonal(hessian))
         diag[diag < 10 ** -10] = 10 ** -10
@@ -18,14 +18,16 @@ def linear(hessian, gradient, precondition=True):
     return p, dict(method="Linear solver")
 
 
-def newton(evaluate, initial, maxit=30, tol=10 ** -5, precondition=True):
+def newton(value, gradient, hessian, initial, maxit=30, tol=10 ** -5,
+           precondition=True):
     stats = dict(method="Newton's method",
                  iterations=0,
                  objective=[])
     p = numpy.array(initial, dtype=numpy.float)
-    misfit, grad, hess = evaluate(p)
+    misfit = value(p)
     stats['objective'].append(misfit)
     for iteration in xrange(maxit):
+        grad, hess = gradient(p), hessian(p)
         if precondition:
             diag = numpy.abs(safe_diagonal(hess))
             diag[diag < 10 ** -10] = 10 ** -10
@@ -33,7 +35,7 @@ def newton(evaluate, initial, maxit=30, tol=10 ** -5, precondition=True):
             hess = safe_dot(precond, hess)
             grad = safe_dot(precond, grad)
         p += safe_solve(hess, -grad)
-        newmisfit, grad, hess = evaluate(p)
+        newmisfit = value(p)
         stats['objective'].append(newmisfit)
         stats['iterations'] += 1
         if newmisfit > misfit or abs((newmisfit - misfit) / misfit) < tol:
@@ -48,19 +50,20 @@ def newton(evaluate, initial, maxit=30, tol=10 ** -5, precondition=True):
     return p, stats
 
 
-def levmarq(evaluate, initial, maxit=30, maxsteps=20, lamb=10, dlamb=2,
-            tol=10**-5, precondition=True):
+def levmarq(value, gradient, hessian, initial, maxit=30, maxsteps=20, lamb=10,
+            dlamb=2, tol=10**-5, precondition=True):
     stats = dict(method="Levemberg-Marquardt",
                  iterations=0,
                  objective=[],
                  step_attempts=[],
                  step_size=[])
     p = numpy.array(initial, dtype=numpy.float)
-    misfit, grad, hess = evaluate(p)
+    misfit = value(p)
     stats['objective'].append(misfit)
     stats['step_attempts'].append(0)
     stats['step_size'].append(lamb)
     for iteration in xrange(maxit):
+        grad, hess = gradient(p), hessian(p)
         if precondition:
             diag = numpy.abs(safe_diagonal(hess))
             diag[diag < 10 ** -10] = 10 ** -10
@@ -71,7 +74,7 @@ def levmarq(evaluate, initial, maxit=30, maxsteps=20, lamb=10, dlamb=2,
         diag = scipy.sparse.diags(safe_diagonal(hess), 0).tocsr()
         for step in xrange(maxsteps):
             newp = p + safe_solve(hess + lamb*diag, -grad)
-            newmisfit, newgrad, newhess = evaluate(newp)
+            newmisfit = value(newp)
             if newmisfit >= misfit:
                 if lamb < 10 ** 15:
                     lamb = lamb*dlamb
@@ -93,8 +96,6 @@ def levmarq(evaluate, initial, maxit=30, maxsteps=20, lamb=10, dlamb=2,
                 (newmisfit - misfit) / misfit) < tol
             p = newp
             misfit = newmisfit
-            grad = newgrad
-            hess = newhess
             # Getting inside here means that I could take a step, so this is
             # where the yield goes.
             stats['objective'].append(misfit)
@@ -112,8 +113,8 @@ def levmarq(evaluate, initial, maxit=30, maxsteps=20, lamb=10, dlamb=2,
     return p, stats
 
 
-def steepest(evaluate, initial, maxit=1000, linesearch=True, maxsteps=30,
-             beta=0.1, tol=10**-5):
+def steepest(value, gradient, initial, maxit=1000, linesearch=True,
+             maxsteps=30, beta=0.1, tol=10**-5):
     assert 1 > beta > 0, \
         "Invalid 'beta' parameter {}. Must be 1 > beta > 0".format(beta)
     stats = dict(method='Steepest Descent',
@@ -121,7 +122,7 @@ def steepest(evaluate, initial, maxit=1000, linesearch=True, maxsteps=30,
                  objective=[],
                  step_attempts=[])
     p = numpy.array(initial, dtype=numpy.float)
-    misfit, grad = evaluate(p)
+    misfit = value(p)
     stats['objective'].append(misfit)
     if linesearch:
         stats['step_attempts'].append(0)
@@ -129,6 +130,7 @@ def steepest(evaluate, initial, maxit=1000, linesearch=True, maxsteps=30,
     alpha = 10 ** (-4)
     stagnation = False
     for iteration in xrange(maxit):
+        grad = gradient(p)
         if linesearch:
             # Calculate now to avoid computing inside the loop
             gradnorm = numpy.linalg.norm(grad) ** 2
@@ -137,13 +139,13 @@ def steepest(evaluate, initial, maxit=1000, linesearch=True, maxsteps=30,
             for i in xrange(maxsteps):
                 stepsize = beta**i
                 newp = p - stepsize*grad
-                newmisfit, newgrad = evaluate(newp)
+                newmisfit = value(newp)
                 if newmisfit - misfit < alpha*stepsize*gradnorm:
                     stagnation = False
                     break
         else:
             newp = p - grad
-            newmisfit, newgrad = evaluate(newp)
+            newmisfit = value(newp)
         if stagnation:
             stop = True
             warnings.warn(
@@ -156,7 +158,6 @@ def steepest(evaluate, initial, maxit=1000, linesearch=True, maxsteps=30,
             stop = abs((newmisfit - misfit) / misfit) < tol
             p = newp
             misfit = newmisfit
-            grad = newgrad
             # Getting inside here means that I could take a step, so this is
             # where the yield goes.
             stats['objective'].append(misfit)
@@ -174,7 +175,7 @@ def steepest(evaluate, initial, maxit=1000, linesearch=True, maxsteps=30,
     return p, stats
 
 
-def acor(evaluate, bounds, nparams, nants=None, archive_size=None, maxit=1000,
+def acor(value, bounds, nparams, nants=None, archive_size=None, maxit=1000,
          diverse=0.5, evap=0.85, seed=None):
     stats = dict(method="Ant Colony Optimization for Continuous Domains",
                  iterations=0,
@@ -197,7 +198,7 @@ def acor(evaluate, bounds, nparams, nants=None, archive_size=None, maxit=1000,
             low, high = bound
             archive[:, i] = numpy.random.uniform(low, high, archive_size)
     # Compute the initial pheromone trail based on the objective function value
-    trail = numpy.fromiter((evaluate(p) for p in archive), dtype=numpy.float)
+    trail = numpy.fromiter((value(p) for p in archive), dtype=numpy.float)
     # Sort the archive of initial random solutions
     order = numpy.argsort(trail)
     archive = [archive[i] for i in order]
@@ -230,7 +231,7 @@ def acor(evaluate, bounds, nparams, nants=None, archive_size=None, maxit=1000,
                         low, high = bounds[i]
                     if ant[i] >= low and ant[i] <= high:
                         break
-            pheromone = evaluate(ant)
+            pheromone = value(ant)
             # Place the new estimate in the archive
             place = numpy.searchsorted(trail, pheromone)
             if place == archive_size:
