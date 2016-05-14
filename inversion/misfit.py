@@ -7,69 +7,64 @@ import numpy as np
 import scipy.sparse
 
 from fatiando.utils import safe_dot
-from fatiando.inversion import optimization
 
+from . import optimization
 from .cache import CachedMethod
 
 
 class NonLinearMisfit(with_metaclass(ABCMeta)):
 
-    def __init__(self, nparams, config=None, cached=True):
+    def __init__(self, nparams, config=None):
         self.nparams = nparams
         self.p_ = None
+        self.stats_ = None
         self.scale = 1
         if config is None:
             config = dict(method='levmarq', initial=np.zeros(nparams))
         self._config = config
-        self.cached = cached
-        if self.cached:
-            self.predict = CachedMethod(self, 'predict')
-            if hasattr(self, 'jacobian'):
-                self.jacobian = CachedMethod(self, 'jacobian')
 
     @abstractmethod
-    def predict(self, *args, **kwargs):
+    def predict(self):
         pass
 
     @abstractmethod
-    def fit(self, args, data, weights=None):
-        self.optimize(data=data, args, weights=None)
-        return self
+    def fit(self):
+        pass
 
-    def residuals(self, data, *args, **kwargs):
-        if 'p' not in kwargs:
-            kwargs['p'] = None
-        pred = self.predict(*args, **kwargs)
-        assert data.shape == pred.shape, \ \
-            "Data shape doesn't match auxiliary arguments."
-        return data - pred
+    @property
+    def estimate_(self):
+        return self.fmt_estimate(self.p_)
+
+    def fmt_estimate(self, p):
+        return p
 
     def optimize(self, data, **kwargs):
-        args = {k:kwargs[k] for k in kwargs if k != 'weights'}
         weights = kwargs.get('weights', None)
-        # TODO: Convert the weights to a sparse matrix if 1d
-        # Make partials of the methods
-        def hessian(p):
-            return self.hessian(p, data, weights=weights, **args)
-        def gradient(p):
-            return self.gradient(p, data, weights=weights, **args)
-        def value(p):
-            return self.value(p, data, weights=weights, **args)
-        # Get the optimization method
-        method = self.config['method']
-        config = {k:kwargs[k] for k in kwargs if k != 'method'}
+        if weights is not None:
+            if weights.ndim == 1:
+                kwargs['weights'] = scipy.sparse.diags(weights, format='csr')
+        tmp = self._config
+        method = tmp['method']
+        config = {k:tmp[k] for k in tmp if k != 'method'}
         optimizer = getattr(optimization, method)
         if method == 'linear':
-            solver = optimizer(hessian(None), gradient(None), **config)
+            g, H = self.evaluate(p=None, data=data, value=False, gradient=True,
+                                 hessian=True, **kwargs)
+            p, stats = optimizer(H, g, **config)
         elif method in ['newton', 'levmarq']:
-            solver = optimizer(hessian, gradient, value, **config)
+            def evaluate(p):
+                return self.evaluate(p, data=data, value=True, gradient=True,
+                                     hessian=True, **kwargs)
+            p, stats = optimizer(evaluate, **config)
         elif self.fit_method == 'steepest':
-            solver = optimizer(gradient, value, **config)
+            def evaluate(p):
+                return self.evaluate(p, data=data, value=True, gradient=True,
+                                     **kwargs)
+            p, stats = optimizer(evaluate, **config)
         elif self.fit_method == 'acor':
-            solver = optimizer(value, **config)
-        # Run the optimizer to the end
-        for i, p, stats in solver:
-            continue
+            def evaluate(p):
+                return self.evaluate(p, data=data, value=True, **kwargs)
+            p, stats = optimizer(evaluate, **config)
         self.p_ = p
         self.stats_ = stats
         return self
@@ -80,36 +75,75 @@ class NonLinearMisfit(with_metaclass(ABCMeta)):
         else:
             return copy.copy(self)
 
-    def value(self, p, data, weights=None, **kwargs):
-        r = self.residuals(data, p=p, **kwargs)
-        if weights is None:
-            val = np.linalg.norm(r)**2
-        else:
-            val = np.sum(weights*(r**2))
-        return val*self.scale
+    def evaluate(self, p, data, value=True, gradient=False, hessian=False,
+                 weights=None, **kwargs):
+        # Calculate the value and jacobian only if they are required.
+        if value or (gradient and p is not None):
+            pred = self.predict(p=p, **kwargs)
+        if gradient or hessian:
+            jacobian = self.jacobian(p=p, **kwargs)
+        output = []
+        if value:
+            if weights is None:
+                val = np.linalg.norm(data - pred)**2
+            else:
+                r = data - pred
+                val = safe_dot(r.T, safe_dot(weights, r))
+            val *= self.scale
+            output.append(val)
+        if gradient:
+            if p is None:
+                residuals = data
+            else:
+                residuals = data - pred
+            if weights is None:
+                grad = safe_dot(jacobian.T, residuals)
+            else:
+                grad = safe_dot(jacobian.T, safe_dot(weights, residuals))
+            # Check if the gradient isn't a one column matrix
+            if len(grad.shape) > 1:
+                # Need to convert it to a 1d array so that hell won't break
+                # loose
+                grad = np.array(grad).ravel()
+            grad *= -2*self.scale
+            output.append(grad)
+        if hessian:
+            if weights is None:
+                hess = safe_dot(jacobian.T, jacobian)
+            else:
+                hess = safe_dot(jacobian.T, safe_dot(weights, jacobian))
+            hess *= 2*self.scale
+            output.append(hess)
+        return output
 
-    def gradient(self, p, data, weights=None, **kwargs):
-        jacobian = self.jacobian(p=p, **kwargs)
-        if p is None:
-            residuals = data
-        else:
-            residuals = self.residuals(data, p=p, **kwargs)
-        if weights is None:
-            grad = safe_dot(jacobian.T, residuals)
-        else:
-            grad = safe_dot(jacobian.T, weights*residuals)
-        # Check if the gradient isn't a one column matrix
-        if len(grad.shape) > 1:
-            # Need to convert it to a 1d array so that hell won't break loose
-            grad = np.array(grad).ravel()
-        grad *= -2*self.scale
-        return grad
+    def score(self, *args):
+        data = args[-1]
+        pred = self.predict(*args[:-1])
+        return np.average((data - pred)**2)
 
-    def hessian(self, p, data, weights=None, **kwargs):
-        jacobian = self.jacobian(p=p, **kwargs)
-        if weights is None:
-            hessian = safe_dot(jacobian.T, jacobian)
-        else:
-            hessian = safe_dot(jacobian.T, weights*jacobian)
-        hessian *= 2*self.scale
-        return hessian
+    def fit_reweighted(self, *args, **kwargs):
+        iterations = kwargs.get('iterations', 10)
+        tol = kwargs.get('tol', 1e-8)
+        data = args[-1]
+        self.fit(*args)
+        for i in range(iterations):
+            residuals = np.abs(data - self.predict(*args[:-1]))
+            residuals[residuals < tol] = tol
+            weights = 1/residuals
+            self.fit(*args, weights=weights)
+        return self
+
+
+class LinearMisfit(NonLinearMisfit):
+    def __init__(self, nparams, config=None):
+        if config is None:
+            config = dict(method='linear')
+        super().__init__(nparams=nparams, config=config)
+
+    @abstractmethod
+    def predict(self):
+        pass
+
+    @abstractmethod
+    def fit(self):
+        pass
