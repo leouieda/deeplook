@@ -23,6 +23,7 @@ class NonLinearMisfit(with_metaclass(ABCMeta)):
         self.p_ = None
         self.stats_ = None
         self.scale = 1
+        self.islinear = False
         if config is None:
             config = dict(method='levmarq', initial=np.zeros(nparams))
         self._config = config
@@ -37,10 +38,6 @@ class NonLinearMisfit(with_metaclass(ABCMeta)):
     def predict(self):
         pass
 
-    @abstractmethod
-    def fit(self):
-        pass
-
     @property
     def estimate_(self):
         return self.fmt_estimate(self.p_)
@@ -48,7 +45,9 @@ class NonLinearMisfit(with_metaclass(ABCMeta)):
     def fmt_estimate(self, p):
         return p
 
-    def optimize(self, data, **kwargs):
+    def fit(self, *args, **kwargs):
+        data = args[-1]
+        args = args[:-1]
         weights = kwargs.get('weights', None)
         if weights is not None:
             if weights.ndim == 1:
@@ -58,29 +57,30 @@ class NonLinearMisfit(with_metaclass(ABCMeta)):
         config = {k:tmp[k] for k in tmp if k != 'method'}
         optimizer = getattr(optimization, method)
         if method == 'linear':
-            gradient = self.gradient(p=None, data=data, **kwargs)
-            hessian = self.hessian(p=None, data=data, **kwargs)
+            gradient = self.gradient(None, data, *args, **kwargs)
+            hessian = self.hessian(None, data, *args, **kwargs)
             p, stats = optimizer(gradient, hessian, **config)
         elif method in self._needs_both:
             def value(p):
-                return self.value(p, data=data, **kwargs)
+                return self.value(p, data, *args, **kwargs)
             def gradient(p):
-                return self.gradient(p, data=data, **kwargs)
+                return self.gradient(p, data, *args, **kwargs)
             def hessian(p):
-                return self.hessian(p, data=data, **kwargs)
+                return self.hessian(p, data, *args, **kwargs)
             p, stats = optimizer(value, gradient, hessian, **config)
         elif method in self._no_hessian:
             def value(p):
-                return self.value(p, data=data, **kwargs)
+                return self.value(p, data, *args, **kwargs)
             def gradient(p):
-                return self.gradient(p, data=data, **kwargs)
+                return self.gradient(p, data, *args, **kwargs)
             p, stats = optimizer(value, gradient, **config)
         elif method in self._no_gradient:
             def value(p):
-                return self.value(p, data=data, **kwargs)
+                return self.value(p, data, *args, **kwargs)
             p, stats = optimizer(value, nparams=self.nparams, **config)
         self.p_ = p
         self.stats_ = stats
+        return self
 
     def copy(self, deep=False):
         if deep:
@@ -88,8 +88,9 @@ class NonLinearMisfit(with_metaclass(ABCMeta)):
         else:
             return copy.copy(self)
 
-    def value(self, p, data, weights=None, **kwargs):
-        pred = self.predict(p=p, **kwargs)
+    def value(self, p, data, *args, **kwargs):
+        weights = kwargs.get('weights', None)
+        pred = self.predict(*args, p=p)
         if weights is None:
             value = np.linalg.norm(data - pred)**2
         else:
@@ -98,12 +99,13 @@ class NonLinearMisfit(with_metaclass(ABCMeta)):
         value *= self.scale
         return value
 
-    def gradient(self, p, data, weights=None, **kwargs):
-        jacobian = self.jacobian(p=p, **kwargs)
+    def gradient(self, p, data, *args, **kwargs):
+        weights = kwargs.get('weights', None)
+        jacobian = self.jacobian(*args, p=p)
         if p is None:
             residuals = data
         else:
-            residuals = data - self.predict(p=p, **kwargs)
+            residuals = data - self.predict(*args, p=p)
         if weights is None:
             gradient = safe_dot(jacobian.T, residuals)
         else:
@@ -116,8 +118,9 @@ class NonLinearMisfit(with_metaclass(ABCMeta)):
         gradient *= -2*self.scale
         return gradient
 
-    def hessian(self, p, data, weights=None, **kwargs):
-        jacobian = self.jacobian(p=p, **kwargs)
+    def hessian(self, p, data, *args, **kwargs):
+        weights = kwargs.get('weights', None)
+        jacobian = self.jacobian(*args, p=p)
         if weights is None:
             hessian = safe_dot(jacobian.T, jacobian)
         else:
@@ -153,6 +156,7 @@ class LinearMisfit(NonLinearMisfit):
         if config is None:
             config = dict(method='linear')
         super().__init__(nparams=nparams, config=config)
+        self.islinear = True
 
     def _set_cache(self):
         self.predict = CachedMethod(self, 'predict', optional=['p'])
@@ -163,8 +167,4 @@ class LinearMisfit(NonLinearMisfit):
 
     @abstractmethod
     def predict(self):
-        pass
-
-    @abstractmethod
-    def fit(self):
         pass
