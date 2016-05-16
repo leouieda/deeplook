@@ -5,9 +5,10 @@ import copy
 from abc import ABCMeta, abstractmethod
 import numpy as np
 
+from .base import FitMixin
 
 
-def MultiObjective(object):
+def MultiObjective(FitMixin):
 
  def __init__(self, *args):
         self._components = self._unpack_components(args)
@@ -27,10 +28,29 @@ def MultiObjective(object):
         self._i = 0  # Tracker for indexing
         self.scale = 1
 
+    def _make_partials(self, *args, **kwargs):
+        packets = []
+        nargs = len(args)//self._have_misfit
+        for start in range(0, len(args), nargs):
+            last = start + nargs - 1
+            packets.append(dict(data=args[last],  # The data
+                                args=args[start:last],  # The rest
+                                kwargs=dict() # ignore the kwargs for now
+                                ))
+        def value(p):
+            return self.value(p, packets)
+        def gradient(p):
+            return self.gradient(p, packets)
+        def hessian(p):
+            return self.hessian(p, packets)
+        return value, gradient, hessian
+
     def fit(self, *args, **kwargs):
+        """
+        """
         assert len(args) % len(self._have_fit) == 0, \
             'Number of arguments must be divisible by number of misfit funcs'
-
+        super().fit(*args, **kwargs)
         for obj in self:
             obj.p_ = self.p_
         return self
@@ -43,8 +63,6 @@ def MultiObjective(object):
             if hasattr(obj, 'config'):
                 obj.config(*args, **kwargs)
         return self
-
-    config.__doc__ = OptimizerMixin.config.__doc__
 
     def _unpack_components(self, args):
         """
@@ -90,19 +108,9 @@ def MultiObjective(object):
         """
         return self._components[0].fmt_estimate(p)
 
-    def value(self, p):
-        """
-        Return the value of the multi-objective function.
-        This will be the sum of all goal functions that make up this
-        multi-objective.
-        Parameters:
-        * p : 1d-array
-            The parameter vector.
-        Returns:
-        * result : scalar (float, int, etc)
-            The sum of the values of the components.
-        """
-        return self.scale*sum(obj.value(p) for obj in self)
+    def value(self, p, packets):
+        return self.scale*sum(o.value(p, t['data'], *t['args'], **t['kwargs'])
+                              for o, t in zip(self, packets))
 
     def gradient(self, p):
         """
@@ -116,7 +124,8 @@ def MultiObjective(object):
         * result : 1d-array
             The sum of the gradients of the components.
         """
-        return self.scale*sum(obj.gradient(p) for obj in self)
+        return self.scale*sum(o.gradient(p, t['data'], *t['args'], **t['kwargs'])
+                              for o, t in zip(self, packets))
 
     def hessian(self, p):
         """
@@ -130,4 +139,5 @@ def MultiObjective(object):
         * result : 2d-array
             The sum of the hessians of the components.
         """
-        return self.scale*sum(obj.hessian(p) for obj in self)
+        return self.scale*sum(o.hessian(p, t['data'], *t['args'], **t['kwargs'])
+                              for o, t in zip(self, packets))
