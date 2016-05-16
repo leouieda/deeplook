@@ -14,10 +14,6 @@ from .cache import CachedMethod
 
 class NonLinearMisfit(FitMixin):
 
-    _no_gradient = ['acor']
-    _no_hessian = ['steepest']
-    _needs_both = ['newton', 'levmarq', 'linear']
-
     def __init__(self, nparams, config=None):
         self.nparams = nparams
         self.p_ = None
@@ -34,7 +30,7 @@ class NonLinearMisfit(FitMixin):
         pass
 
     def _set_cache(self):
-        self.predict = CachedMethod(self, 'predict')
+        self.predict = CachedMethod(self, 'predict', optional=['p'])
         if hasattr(self, 'jacobian'):
             self.jacobian = CachedMethod(self, 'jacobian')
 
