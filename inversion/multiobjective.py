@@ -27,7 +27,7 @@ def MultiObjective(object):
         self._i = 0  # Tracker for indexing
         self.scale = 1
 
-    def fit(self, *args):
+    def fit(self, *args, **kwargs):
         assert len(args) % len(self._have_fit) == 0, \
             'Number of arguments must be divisible by number of misfit funcs'
 

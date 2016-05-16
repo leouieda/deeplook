@@ -8,11 +8,11 @@ import scipy.sparse
 
 from fatiando.utils import safe_dot
 
-from . import optimization
+from .base import FitMixin
 from .cache import CachedMethod
 
 
-class NonLinearMisfit(with_metaclass(ABCMeta)):
+class NonLinearMisfit(FitMixin):
 
     _no_gradient = ['acor']
     _no_hessian = ['steepest']
@@ -29,58 +29,29 @@ class NonLinearMisfit(with_metaclass(ABCMeta)):
         self._config = config
         self._set_cache()
 
+    @abstractmethod
+    def predict(self):
+        pass
+
     def _set_cache(self):
         self.predict = CachedMethod(self, 'predict')
         if hasattr(self, 'jacobian'):
             self.jacobian = CachedMethod(self, 'jacobian')
 
-    @abstractmethod
-    def predict(self):
-        pass
-
-    @property
-    def estimate_(self):
-        return self.fmt_estimate(self.p_)
-
-    def fmt_estimate(self, p):
-        return p
-
-    def fit(self, *args, **kwargs):
+    def _make_partials(self, *args, **kwargs):
         data = args[-1]
         args = args[:-1]
         weights = kwargs.get('weights', None)
         if weights is not None:
             if weights.ndim == 1:
                 kwargs['weights'] = scipy.sparse.diags(weights, format='csr')
-        tmp = self._config
-        method = tmp['method']
-        config = {k:tmp[k] for k in tmp if k != 'method'}
-        optimizer = getattr(optimization, method)
-        if method == 'linear':
-            gradient = self.gradient(None, data, *args, **kwargs)
-            hessian = self.hessian(None, data, *args, **kwargs)
-            p, stats = optimizer(gradient, hessian, **config)
-        elif method in self._needs_both:
-            def value(p):
-                return self.value(p, data, *args, **kwargs)
-            def gradient(p):
-                return self.gradient(p, data, *args, **kwargs)
-            def hessian(p):
-                return self.hessian(p, data, *args, **kwargs)
-            p, stats = optimizer(value, gradient, hessian, **config)
-        elif method in self._no_hessian:
-            def value(p):
-                return self.value(p, data, *args, **kwargs)
-            def gradient(p):
-                return self.gradient(p, data, *args, **kwargs)
-            p, stats = optimizer(value, gradient, **config)
-        elif method in self._no_gradient:
-            def value(p):
-                return self.value(p, data, *args, **kwargs)
-            p, stats = optimizer(value, nparams=self.nparams, **config)
-        self.p_ = p
-        self.stats_ = stats
-        return self
+        def value(p):
+            return self.value(p, data, *args, **kwargs)
+        def gradient(p):
+            return self.gradient(p, data, *args, **kwargs)
+        def hessian(p):
+            return self.hessian(p, data, *args, **kwargs)
+        return value, gradient, hessian
 
     def copy(self, deep=False):
         if deep:
@@ -145,10 +116,6 @@ class NonLinearMisfit(with_metaclass(ABCMeta)):
             self.fit(*args, weights=weights)
         return self
 
-    def config(self, method, **kwargs):
-        self._config = dict(method=method)
-        self._config.update(kwargs)
-        return self
 
 class LinearMisfit(NonLinearMisfit):
 
@@ -164,7 +131,3 @@ class LinearMisfit(NonLinearMisfit):
             self.jacobian = CachedMethod(self, 'jacobian', ignored=['p'])
             self.hessian = CachedMethod(self, 'hessian', ignored=['p'],
                                         bypass=['weights'])
-
-    @abstractmethod
-    def predict(self):
-        pass
