@@ -2,6 +2,7 @@ from __future__ import division
 from future.builtins import super, range, object
 from future.utils import with_metaclass
 from abc import ABCMeta, abstractmethod
+import scipy.optimize
 
 from . import optimization
 
@@ -11,6 +12,7 @@ class FitMixin(with_metaclass(ABCMeta)):
     _no_gradient = ['acor']
     _no_hessian = ['steepest']
     _needs_both = ['newton', 'levmarq', 'linear']
+    _scipy = ['Nelder-Mead']
 
     @abstractmethod
     def _make_partials(self, *args, **kwargs):
@@ -27,7 +29,8 @@ class FitMixin(with_metaclass(ABCMeta)):
         tmp = self._config
         method = tmp['method']
         config = {k:tmp[k] for k in tmp if k != 'method'}
-        optimizer = getattr(optimization, method)
+        if method not in self._scipy:
+            optimizer = getattr(optimization, method)
         value, gradient, hessian = self._make_partials(*args, **kwargs)
         if method == 'linear':
             grad = gradient(None)
@@ -39,6 +42,14 @@ class FitMixin(with_metaclass(ABCMeta)):
             p, stats = optimizer(value, gradient, **config)
         elif method in self._no_gradient:
             p, stats = optimizer(value, nparams=self.nparams, **config)
+        elif method in self._scipy:
+            res = scipy.optimize.minimize(method=method,
+                                          fun=value,
+                                          jac=gradient,
+                                          hess=hessian,
+                                          **config)
+            p = res.x
+            stats = dict(method=method, iterations=res.nit)
         self.p_ = p
         self.stats_ = stats
         return self
