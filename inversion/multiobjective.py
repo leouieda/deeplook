@@ -19,10 +19,6 @@ class OperatorMixin(object):
     @scale.setter
     def scale(self, value):
         self._scale = value
-        self._scale_changed()
-
-    def _scale_changed(self):
-        pass
 
     def copy(self, deep=False):
         if deep:

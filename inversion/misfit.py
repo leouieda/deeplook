@@ -127,10 +127,3 @@ class LinearMisfit(NonLinearMisfit):
         self.predict = CachedMethod(self, 'predict', optional=['p'])
         if hasattr(self, 'jacobian'):
             self.jacobian = CachedMethod(self, 'jacobian', ignored=['p'])
-            self.hessian = CachedMethod(self, 'hessian', ignored=['p'],
-                                        bypass=['weights'])
-
-    def _scale_changed(self):
-        if hasattr(self, 'jacobian'):
-            if isinstance(self.hessian, CachedMethod):
-                self.hessian.reset()
