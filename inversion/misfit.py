@@ -8,19 +8,16 @@ import scipy.sparse
 
 from fatiando.utils import safe_dot
 
-from .base import FitMixin
-from .multiobjective import OperatorMixin
+from .base import FitMixin, Objective
 from .cache import CachedMethod
 
 
-class NonLinearMisfit(FitMixin, OperatorMixin):
+class NonLinearMisfit(FitMixin, Objective):
 
     def __init__(self, nparams, config=None):
-        self.nparams = nparams
+        super().__init__(nparams, islinear=False)
         self.p_ = None
         self.stats_ = None
-        self.scale = 1
-        self.islinear = False
         if config is None:
             config = dict(method='levmarq', initial=np.zeros(nparams))
         self._config = config
