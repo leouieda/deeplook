@@ -1,2 +1,2 @@
 from .misfit import LinearMisfit, NonLinearMisfit
-# from .regularization import Smoothness, Smoothness1D, Damping
+from .regularization import Damping
