@@ -9,10 +9,11 @@ import scipy.sparse
 from fatiando.utils import safe_dot
 
 from .base import FitMixin
+from .multiobjective import OperatorMixin
 from .cache import CachedMethod
 
 
-class NonLinearMisfit(FitMixin):
+class NonLinearMisfit(FitMixin, OperatorMixin):
 
     def __init__(self, nparams, config=None):
         self.nparams = nparams
@@ -23,16 +24,23 @@ class NonLinearMisfit(FitMixin):
         if config is None:
             config = dict(method='levmarq', initial=np.zeros(nparams))
         self._config = config
-        self._set_cache()
+        self.set_cache()
 
     @abstractmethod
     def predict(self):
         pass
 
-    def _set_cache(self):
+    def set_cache(self):
         self.predict = CachedMethod(self, 'predict', optional=['p'])
         if hasattr(self, 'jacobian'):
             self.jacobian = CachedMethod(self, 'jacobian')
+
+    def copy(self, deep=False):
+        obj = super().copy(deep)
+        # Need to reset the cache because the CachedMethod in the copy is
+        # holding an instance of the original object.
+        obj.set_cache()
+        return obj
 
     def _make_partials(self, *args, **kwargs):
         data = args[-1]
@@ -48,12 +56,6 @@ class NonLinearMisfit(FitMixin):
         def hessian(p):
             return self.hessian(p, data, *args, **kwargs)
         return value, gradient, hessian
-
-    def copy(self, deep=False):
-        if deep:
-            return copy.deepcopy(self)
-        else:
-            return copy.copy(self)
 
     def value(self, p, data, *args, **kwargs):
         weights = kwargs.get('weights', None)
@@ -121,9 +123,14 @@ class LinearMisfit(NonLinearMisfit):
         super().__init__(nparams=nparams, config=config)
         self.islinear = True
 
-    def _set_cache(self):
+    def set_cache(self):
         self.predict = CachedMethod(self, 'predict', optional=['p'])
         if hasattr(self, 'jacobian'):
             self.jacobian = CachedMethod(self, 'jacobian', ignored=['p'])
             self.hessian = CachedMethod(self, 'hessian', ignored=['p'],
                                         bypass=['weights'])
+
+    def _scale_changed(self):
+        if hasattr(self, 'jacobian'):
+            if isinstance(self.hessian, CachedMethod):
+                self.hessian.reset()

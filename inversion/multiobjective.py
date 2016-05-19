@@ -8,9 +8,63 @@ import numpy as np
 from .base import FitMixin
 
 
-def MultiObjective(FitMixin):
+class OperatorMixin(object):
 
- def __init__(self, *args):
+    _multiobjective = None
+
+    @property
+    def scale(self):
+        return getattr(self, '_scale', 1)
+
+    @scale.setter
+    def scale(self, value):
+        self._scale = value
+        self._scale_changed()
+
+    def _scale_changed(self):
+        pass
+
+    def copy(self, deep=False):
+        if deep:
+            obj = copy.deepcopy(self)
+        else:
+            obj = copy.copy(self)
+        return obj
+
+    def __add__(self, other):
+        """
+        Add two objective functions to make a MultiObjective.
+        """
+        assert self.nparams == other.nparams, \
+            "Can't add goals with different number of parameters:" \
+            + ' {}, {}'.format(self.nparams, other.nparams)
+        # Make a shallow copy of self to return. If returned self, doing
+        # 'a = b + c' a and b would reference the same object.
+        if self._multiobjective is None:
+            mo_cls = MultiObjective
+        else:
+            mo_cls = self._multiobjective
+        res = mo_cls(self.copy(), other.copy())
+        return res
+
+    def __mul__(self, scale):
+        """
+        Multiply the objective function by a scalar to set the `scale`
+        attribute.
+        """
+        # Make a shallow copy of self to return. If returned self, doing
+        # 'a = 10*b' a and b would reference the same object.
+        obj = self.copy()
+        obj.scale = obj.scale*scale
+        return obj
+
+    def __rmul__(self, scale):
+        return self.__mul__(scale)
+
+
+class MultiObjective(FitMixin, OperatorMixin):
+
+    def __init__(self, *args):
         self._components = self._unpack_components(args)
         self._have_fit = [i for i, c in enumerate(self._components)
                           if hasattr(c, 'fit')]
@@ -23,14 +77,16 @@ def MultiObjective(FitMixin):
         self.nparams = nparams[0]
         if all(obj.islinear for obj in self._components):
             self.islinear = True
+            self._config = dict(method='linear')
         else:
             self.islinear = False
+            self._config = dict(method='Nelder-Mead', x0=np.ones(self.nparams))
         self._i = 0  # Tracker for indexing
         self.scale = 1
 
     def _make_partials(self, *args, **kwargs):
         packets = []
-        nargs = len(args)//self._have_misfit
+        nargs = len(args)//len(self._have_fit)
         for start in range(0, len(args), nargs):
             last = start + nargs - 1
             packets.append(dict(data=args[last],  # The data
@@ -112,7 +168,7 @@ def MultiObjective(FitMixin):
         return self.scale*sum(o.value(p, t['data'], *t['args'], **t['kwargs'])
                               for o, t in zip(self, packets))
 
-    def gradient(self, p):
+    def gradient(self, p, packets):
         """
         Return the gradient of the multi-objective function.
         This will be the sum of all goal functions that make up this
@@ -127,7 +183,7 @@ def MultiObjective(FitMixin):
         return self.scale*sum(o.gradient(p, t['data'], *t['args'], **t['kwargs'])
                               for o, t in zip(self, packets))
 
-    def hessian(self, p):
+    def hessian(self, p, packets):
         """
         Return the hessian of the multi-objective function.
         This will be the sum of all goal functions that make up this
