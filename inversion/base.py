@@ -123,8 +123,8 @@ class MultiObjective(FitMixin, Objective):
 
     def __init__(self, *args):
         self._components = self._unpack_components(args)
-        self._have_fit = [i for i, c in enumerate(self._components)
-                          if hasattr(c, 'fit')]
+        self._have_fit = [c for c in self._components if hasattr(c, 'fit')]
+        self._no_fit = [c for c in self._components if not hasattr(c, 'fit')]
         self.size = len(self._components)
         self.p_ = None
         nparams = [obj.nparams for obj in self._components]
@@ -222,8 +222,10 @@ class MultiObjective(FitMixin, Objective):
         return self._components[0].fmt_estimate(p)
 
     def value(self, p, packets):
-        return self.scale*sum(o.value(p, t['data'], *t['args'], **t['kwargs'])
-                              for o, t in zip(self, packets))
+        res = sum(o.value(p, t['data'], *t['args'], **t['kwargs'])
+                  for o, t in zip(self._have_fit, packets))
+        res += sum(o.value(p) for o in self._no_fit)
+        return self.scale*res
 
     def gradient(self, p, packets):
         """
@@ -237,8 +239,10 @@ class MultiObjective(FitMixin, Objective):
         * result : 1d-array
             The sum of the gradients of the components.
         """
-        return self.scale*sum(o.gradient(p, t['data'], *t['args'], **t['kwargs'])
-                              for o, t in zip(self, packets))
+        res = sum(o.gradient(p, t['data'], *t['args'], **t['kwargs'])
+                  for o, t in zip(self._have_fit, packets))
+        res += sum(o.gradient(p) for o in self._no_fit)
+        return self.scale*res
 
     def hessian(self, p, packets):
         """
@@ -252,5 +256,7 @@ class MultiObjective(FitMixin, Objective):
         * result : 2d-array
             The sum of the hessians of the components.
         """
-        return self.scale*sum(o.hessian(p, t['data'], *t['args'], **t['kwargs'])
-                              for o, t in zip(self, packets))
+        res = sum(o.hessian(p, t['data'], *t['args'], **t['kwargs'])
+                  for o, t in zip(self._have_fit, packets))
+        res += sum(o.hessian(p) for o in self._no_fit)
+        return self.scale*res
