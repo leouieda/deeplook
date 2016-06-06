@@ -97,7 +97,9 @@ class NonLinearMisfit(FitMixin, Objective):
     def score(self, *args):
         data = args[-1]
         pred = self.predict(*args[:-1])
-        return np.average((data - pred)**2)
+        u = ((data - pred)**2).sum()
+        v = ((data - data.mean())**2).sum()
+        return 1 - u/v
 
     def fit_reweighted(self, *args, **kwargs):
         iterations = kwargs.get('iterations', 10)
