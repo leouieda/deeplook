@@ -1,0 +1,16 @@
+name: inv-again
+dependencies:
+    - python=2.7
+    - pip
+    - numpy
+    - scipy
+    - matplotlib
+    - numba
+    - future
+    - pillow
+    - jupyter
+    - nose
+    - pep8=1.6.2
+    - coverage=3.7.1
+    - pip:
+        - coveralls==0.5
