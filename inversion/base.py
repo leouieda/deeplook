@@ -1,6 +1,7 @@
 from __future__ import division
 from future.builtins import super, range, object
 from future.utils import with_metaclass
+import hashlib
 import copy
 from abc import ABCMeta, abstractmethod
 import scipy.optimize
@@ -8,23 +9,51 @@ import scipy.optimize
 from . import optimization
 
 
+class MemoizeDerivs(object):
+    def __init__(self, func, with_hessian=False):
+        self.func = func
+        self.with_hessian = with_hessian
+        self.grad = None
+        if self.with_hessian:
+            self.hess = None
+        self.hash = None
 
-class Objective(object):
+    def __call__(self, p, *args):
+        self.hash = hashlib.sha1(p).hexdigest()
+        res = self.func(p, *args)
+        assert len(res) <= 3, 'Too many return arguments'
+        self.grad = res[1]
+        if self.with_hessian:
+            self.hess = res[2]
+        return res[0]
 
-    _multiobjective = None
+    def gradient(self, p, *args):
+        newhash = hashlib.sha1(p).hexdigest()
+        if self.grad is None or newhash != self.hash:
+            self(p, *args)
+        return self.grad
 
-    def __init__(self, nparams, islinear):
+    def hessian(self, p, *args):
+        newhash = hashlib.sha1(p).hexdigest()
+        if self.hess is None or newhash != self.hash:
+            self(p, *args)
+        return self.hess
+
+
+
+class NonLinearModel(with_metaclass(ABCMeta)):
+
+    def __init__(self, nparams, method, method_args):
         self.nparams = nparams
-        self.islinear = islinear
-        self._scale = 1
+        self.islinear = False
+        self.p_ = None
+        self.stats_ = None
+        self.method = method
+        self.method_args = method_args
 
-    @property
-    def scale(self):
-        return getattr(self, '_scale', 1)
-
-    @scale.setter
-    def scale(self, value):
-        self._scale = value
+    @abstractmethod
+    def predict(self):
+        pass
 
     def copy(self, deep=False):
         if deep:
@@ -33,230 +62,65 @@ class Objective(object):
             obj = copy.copy(self)
         return obj
 
-    def __add__(self, other):
-        """
-        Add two objective functions to make a MultiObjective.
-        """
-        assert self.nparams == other.nparams, \
-            "Can't add goals with different number of parameters:" \
-            + ' {}, {}'.format(self.nparams, other.nparams)
-        # Make a shallow copy of self to return. If returned self, doing
-        # 'a = b + c' a and b would reference the same object.
-        if self._multiobjective is None:
-            mo_cls = MultiObjective
+    def evaluate(self, p, data, aux, weights=None, value=True, grad=False,
+                 hess=False):
+        backup = self.p_
+        self.p_ = p
+        returned = []
+        if value or grad:
+            residuals = data - self.predict(*aux)
+        if value:
+            if weights is None:
+                value = np.linalg.norm(residuals)**2
+            else:
+                value = safe_dot(residuals.T, safe_dot(weights, residuals))
+            returned.append(value)
+        if grad or hess:
+            A = self.jacobian(*args)
+        if grad:
+            if weights is None:
+                gradient = -2*safe_dot(jacobian.T, residuals)
+            else:
+                gradient = -2*safe_dot(jacobian.T, safe_dot(weights, residuals))
+            # Check if the gradient isn't a one column matrix
+            if len(gradient.shape) > 1:
+                # Need to convert it to a 1d array so that hell won't break
+                # loose
+                gradient = np.array(gradient).ravel()
+            returned.append(gradient)
+        if hess:
+            if weights is None:
+                hessian = 2*safe_dot(jacobian.T, jacobian)
+            else:
+                hessian = 2*safe_dot(jacobian.T, safe_dot(weights, jacobian))
+            returned.append(hessian)
+        self.p_ = backup
+        if len(returned) == 1:
+            return returned[0]
         else:
-            mo_cls = self._multiobjective
-        res = mo_cls(self.copy(), other.copy())
-        return res
+            return returned
 
-    def __mul__(self, scale):
-        """
-        Multiply the objective function by a scalar to set the `scale`
-        attribute.
-        """
-        # Make a shallow copy of self to return. If returned self, doing
-        # 'a = 10*b' a and b would reference the same object.
-        obj = self.copy()
-        obj.scale = obj.scale*scale
-        return obj
+    def fit(self, data, aux, weights=None):
+        sp = """Nelder-Mead Powell CG BFGS Newton-CG L-BFGS-B TNC COBYLA SLSQP
+                dogleg trust-ncg""".split()
+        sp_jac = """CG BFGS L-BFGS-B TNC SLSQP Newton-CG dogleg
+                    trust-ncg""".split()
+        sp_hess = 'Newton-CG dogleg trust-ncg'.split()
+        if self.method in sp:
+            args = [data, aux, weights]
+            jac, hess = None, None
+            if self.method in sp_jac:
+                jac =
 
-    def __rmul__(self, scale):
-        return self.__mul__(scale)
-
-
-class FitMixin(with_metaclass(ABCMeta)):
-
-    _no_gradient = ['acor']
-    _no_hessian = ['steepest']
-    _needs_both = ['newton', 'levmarq', 'linear']
-    _scipy = ['Nelder-Mead']
-
-    @abstractmethod
-    def _make_partials(self, *args, **kwargs):
-        # Return the value, gradient and hessian functions
-        # that take only a p array as argument.
-        pass
-
-    def config(self, method, **kwargs):
-        self._config = dict(method=method)
-        self._config.update(kwargs)
-        return self
-
-    def fit(self, *args, **kwargs):
-        tmp = self._config
-        method = tmp['method']
-        config = {k:tmp[k] for k in tmp if k != 'method'}
-        if method not in self._scipy:
-            optimizer = getattr(optimization, method)
-        value, gradient, hessian = self._make_partials(*args, **kwargs)
-        if method == 'linear':
-            grad = gradient(None)
-            hess = hessian(None)
-            p, stats = optimizer(grad, hess, **config)
-        elif method in self._needs_both:
-            p, stats = optimizer(value, gradient, hessian, **config)
-        elif method in self._no_hessian:
-            p, stats = optimizer(value, gradient, **config)
-        elif method in self._no_gradient:
-            p, stats = optimizer(value, nparams=self.nparams, **config)
-        elif method in self._scipy:
-            res = scipy.optimize.minimize(method=method,
-                                          fun=value,
-                                          jac=gradient,
-                                          hess=hessian,
-                                          **config)
+            fun = MemoizeDerivs(self.evaluate, with_hessian=False)
+            res = scipy.optimize.minimize(fun=fun,
+                                          method=method,
+                                          jac=fun.gradient,
+                                          **self.method_args)
             p = res.x
             stats = dict(method=method, iterations=res.nit)
+        elif self.method in sp_hess:
         self.p_ = p
         self.stats_ = stats
         return self
 
-    @property
-    def estimate_(self):
-        return self.fmt_estimate(self.p_)
-
-    def fmt_estimate(self, p):
-        return p
-
-
-class MultiObjective(FitMixin, Objective):
-
-    def __init__(self, *args):
-        self._components = self._unpack_components(args)
-        self._have_fit = [c for c in self._components if hasattr(c, 'fit')]
-        self._no_fit = [c for c in self._components if not hasattr(c, 'fit')]
-        self.size = len(self._components)
-        self.p_ = None
-        nparams = [obj.nparams for obj in self._components]
-        assert all(nparams[0] == n for n in nparams[1:]), \
-            "Can't add goals with different number of parameters:" \
-            + ' ' + ', '.join(str(n) for n in nparams)
-        nparams = nparams[0]
-        if all(obj.islinear for obj in self._components):
-            islinear = True
-            self._config = dict(method='linear')
-        else:
-            islinear = False
-            self._config = dict(method='Nelder-Mead', x0=np.ones(self.nparams))
-        self._i = 0  # Tracker for indexing
-        super().__init__(nparams, islinear)
-
-    def _make_partials(self, *args, **kwargs):
-        packets = []
-        nargs = len(args)//len(self._have_fit)
-        for start in range(0, len(args), nargs):
-            last = start + nargs - 1
-            packets.append(dict(data=args[last],  # The data
-                                args=args[start:last],  # The rest
-                                kwargs=dict() # ignore the kwargs for now
-                                ))
-        def value(p):
-            return self.value(p, packets)
-        def gradient(p):
-            return self.gradient(p, packets)
-        def hessian(p):
-            return self.hessian(p, packets)
-        return value, gradient, hessian
-
-    def fit(self, *args, **kwargs):
-        """
-        """
-        assert len(args) % len(self._have_fit) == 0, \
-            'Number of arguments must be divisible by number of misfit funcs'
-        super().fit(*args, **kwargs)
-        for obj in self:
-            obj.p_ = self.p_
-        return self
-
-    # Pass along the configuration in case the classes need to change something
-    # depending on the optimization method.
-    def config(self, *args, **kwargs):
-        super().config(*args, **kwargs)
-        for obj in self:
-            if hasattr(obj, 'config'):
-                obj.config(*args, **kwargs)
-        return self
-
-    def _unpack_components(self, args):
-        """
-        Find all the MultiObjective elements in components and unpack them into
-        a single list.
-        This is needed so that ``D = A + B + C`` can be indexed as ``D[0] == A,
-        D[1] == B, D[2] == C``. Otherwise, ``D[1]`` would be a
-        ``MultiObjetive == B + C``.
-        """
-        components = []
-        for comp in args:
-            if isinstance(comp, MultiObjective):
-                components.extend([c*comp.regul_param for c in comp])
-            else:
-                components.append(comp)
-        return components
-
-    def __len__(self):
-        return self.size
-
-    def __getitem__(self, i):
-        return self._components[i]
-
-    def __iter__(self):
-        self._i = 0
-        return self
-
-    def __next__(self):
-        """
-        Used for iterating over the MultiObjetive.
-        """
-        if self._i >= self.size:
-            raise StopIteration
-        comp = self.__getitem__(self._i)
-        self._i += 1
-        return comp
-
-    def fmt_estimate(self, p):
-        """
-        Format the current estimated parameter vector into a more useful form.
-        Will call the ``fmt_estimate`` method of the first component goal
-        function (the first term in the addition that created this object).
-        """
-        return self._components[0].fmt_estimate(p)
-
-    def value(self, p, packets):
-        res = sum(o.value(p, t['data'], *t['args'], **t['kwargs'])
-                  for o, t in zip(self._have_fit, packets))
-        res += sum(o.value(p) for o in self._no_fit)
-        return self.scale*res
-
-    def gradient(self, p, packets):
-        """
-        Return the gradient of the multi-objective function.
-        This will be the sum of all goal functions that make up this
-        multi-objective.
-        Parameters:
-        * p : 1d-array
-            The parameter vector.
-        Returns:
-        * result : 1d-array
-            The sum of the gradients of the components.
-        """
-        res = sum(o.gradient(p, t['data'], *t['args'], **t['kwargs'])
-                  for o, t in zip(self._have_fit, packets))
-        res += sum(o.gradient(p) for o in self._no_fit)
-        return self.scale*res
-
-    def hessian(self, p, packets):
-        """
-        Return the hessian of the multi-objective function.
-        This will be the sum of all goal functions that make up this
-        multi-objective.
-        Parameters:
-        * p : 1d-array
-            The parameter vector.
-        Returns:
-        * result : 2d-array
-            The sum of the hessians of the components.
-        """
-        res = sum(o.hessian(p, t['data'], *t['args'], **t['kwargs'])
-                  for o, t in zip(self._have_fit, packets))
-        res += sum(o.hessian(p) for o in self._no_fit)
-        return self.scale*res
