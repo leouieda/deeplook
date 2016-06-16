@@ -2,13 +2,14 @@ from __future__ import division
 from future.builtins import super, range, object
 from future.utils import with_metaclass
 from abc import ABCMeta, abstractmethod
+import numpy as np
 
 from .optimization import LinearOptimizer
 from .misfit import L2NormMisfit
 
 
 class NonLinearModel(with_metaclass(ABCMeta)):
-        
+
     def __init__(self, nparams, misfit='L2NormMisfit', optimizer='Nelder-Mead', regularization=None):
         self.nparams = nparams
         self.islinear = False
@@ -16,15 +17,15 @@ class NonLinearModel(with_metaclass(ABCMeta)):
         self.regularization = None
         self.misfit = None
         self.optimizer = None
-        self.config(misfit=misfit, 
-                    optimizer=optimizer, 
+        self.config(misfit=misfit,
+                    optimizer=optimizer,
                     regularization=regularization)
-    
+
     @abstractmethod
     def predict(self, args):
         "Return data predicted by self.p_"
         pass
-    
+
     def config(self, optimizer=None, misfit=None, regularization=None):
         if optimizer is not None:
             self._set_optimizer(optimizer)
@@ -33,26 +34,26 @@ class NonLinearModel(with_metaclass(ABCMeta)):
         if regularization is not None:
             self._set_regularization(regularization)
         return self
-                             
-        
+
+
     def _set_optimizer(self, optimizer):
         "Configure the optimization"
         if optimizer == 'linear':
             self.optimizer = LinearOptimizer()
         else:
             self.optimizer = optimizer
-    
+
     def _set_misfit(self, misfit):
         "Pass a different misfit function"
         if misfit == 'L2NormMisfit':
             self.misfit = L2NormMisfit
         else:
             self.misfit = misfit
-    
+
     def _set_regularization(self, reguls):
         "Use the given regularization"
         self.regularization = reguls
-    
+
     def _make_partial(self, args, func):
         def partial(p):
             backup = self.p_
@@ -61,12 +62,12 @@ class NonLinearModel(with_metaclass(ABCMeta)):
             self.p_ = backup
             return res
         return partial
-                
+
     def fit(self, args, data, weights=None, jacobian=None):
         "Fit the model to the given data"
-        misfit_args = dict(data=data, 
+        misfit_args = dict(data=data,
                            predict=self._make_partial(args, 'predict'),
-                           weights=weights, 
+                           weights=weights,
                            islinear=self.islinear,
                            jacobian_cache=jacobian)
         if hasattr(self, 'jacobian'):
@@ -79,29 +80,44 @@ class NonLinearModel(with_metaclass(ABCMeta)):
         self.p_ = self.optimizer.minimize(objective) # the estimated parameter vector
         return self
 
-    
+    def score(self, *args, **kwargs):
+        data = args[-1]
+        pred = self.predict(*args[:-1])
+        scorer = kwargs.get('scorer', 'R2')
+        if scorer == 'L2':
+            return np.linalg.norm(data - pred)**2
+        elif scorer == 'R2':
+            u = ((data - pred)**2).sum()
+            v = ((data - data.mean())**2).sum()
+            return 1 - u/v
+        else:
+            assert False, "Unknown scorer '{}'".format(scorer)
+
+
+
+
 class LinearModel(NonLinearModel):
     def __init__(self, nparams, misfit='L2NormMisfit', optimizer='linear'):
         super().__init__(nparams, misfit=misfit, optimizer=optimizer)
         self.islinear = True
-        
-        
+
+
 class Objective(object):
     def __init__(self, components):
         self.components = components
-    
+
     def value(self, p):
-        return np.sum(lamb*comp.value(p) 
+        return np.sum(lamb*comp.value(p)
                        for lamb, comp in self.components)
-    
+
     def gradient(self, p):
-        return np.sum(lamb*comp.gradient(p) 
+        return np.sum(lamb*comp.gradient(p)
                        for lamb, comp in self.components)
-    
+
     def gradient_at_null(self):
-        return np.sum(lamb*comp.gradient_at_null() 
+        return np.sum(lamb*comp.gradient_at_null()
                        for lamb, comp in self.components)
-    
+
     def hessian(self, p):
-        return np.sum(lamb*comp.hessian(p) 
+        return np.sum(lamb*comp.hessian(p)
                        for lamb, comp in self.components)
