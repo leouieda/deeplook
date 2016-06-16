@@ -3,47 +3,55 @@ from future.builtins import super, range, object
 from future.utils import with_metaclass
 from abc import ABCMeta, abstractmethod
 
-from . import optimization
+from .optimization import LinearOptimizer
 from .misfit import L2NormMisfit
 
 
 class NonLinearModel(with_metaclass(ABCMeta)):
         
-    def __init__(self, nparams, misfit='L2NormMisfit', optimizer='Nelder-Mead'):
+    def __init__(self, nparams, misfit='L2NormMisfit', optimizer='Nelder-Mead', regularization=None):
         self.nparams = nparams
         self.islinear = False
-        self.regularization = []
+        self.p_ = None
+        self.regularization = None
         self.misfit = None
         self.optimizer = None
-        self.set_misfit(misfit)
-        self.set_optimizer(optimizer)
-        self.p_ = None
+        self.config(misfit=misfit, 
+                    optimizer=optimizer, 
+                    regularization=regularization)
     
     @abstractmethod
     def predict(self, args):
         "Return data predicted by self.p_"
         pass
+    
+    def config(self, optimizer=None, misfit=None, regularization=None):
+        if optimizer is not None:
+            self._set_optimizer(optimizer)
+        if misfit is not None:
+            self._set_misfit(misfit)
+        if regularization is not None:
+            self._set_regularization(regularization)
+        return self
+                             
         
-    def set_optimizer(self, optimizer):
+    def _set_optimizer(self, optimizer):
         "Configure the optimization"
         if optimizer == 'linear':
             self.optimizer = LinearOptimizer()
         else:
             self.optimizer = optimizer
-        return self
     
-    def set_misfit(self, misfit):
+    def _set_misfit(self, misfit):
         "Pass a different misfit function"
         if misfit == 'L2NormMisfit':
             self.misfit = L2NormMisfit
         else:
-            self.misfit = misfit        
-        return self
+            self.misfit = misfit
     
-    def add_regularization(self, regul_param, regul):
+    def _set_regularization(self, reguls):
         "Use the given regularization"
-        self.regularization.append([regul_param, regul])
-        return self
+        self.regularization = reguls
     
     def _make_partial(self, args, func):
         def partial(p):
@@ -63,8 +71,11 @@ class NonLinearModel(with_metaclass(ABCMeta)):
                            jacobian_cache=jacobian)
         if hasattr(self, 'jacobian'):
             misfit_args['jacobian'] = self._make_partial(args, 'jacobian')
-        misfit = self.misfit(**misfit_args)         
-        objective = Objective([[1, misfit]] + self.regularization)
+        misfit = self.misfit(**misfit_args)
+        if self.regularization is None or not self.regularization:
+            objective = misfit
+        else:
+            objective = Objective([[1, misfit]] + self.regularization)
         self.p_ = self.optimizer.minimize(objective) # the estimated parameter vector
         return self
 
