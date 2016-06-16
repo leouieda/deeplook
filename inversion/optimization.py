@@ -1,53 +1,137 @@
 from __future__ import division
-import copy
+from future.builtins import object, super, range
 import warnings
-import numpy
-import scipy.sparse
+import numpy as np
+import scipy.sparse as sp
 
 from fatiando.utils import safe_solve, safe_diagonal, safe_dot
 
 
-def linear(gradient, hessian, precondition=True):
-    if precondition:
-        diag = numpy.abs(safe_diagonal(hessian))
-        diag[diag < 10 ** -10] = 10 ** -10
-        precond = scipy.sparse.diags(1. / diag, 0).tocsr()
-        hessian = safe_dot(precond, hessian)
-        gradient = safe_dot(precond, gradient)
-    p = safe_solve(hessian, -gradient)
-    return p, dict(method="Linear solver")
+class LinearOptimizer(object):
+    
+    def __init__(self, precondition=True):
+        self.precondition = precondition
+        
+    def minimize(self, objective):        
+        hessian = objective.hessian(None)
+        gradient = objective.gradient_at_null()
+        if self.precondition:
+            diag = np.abs(safe_diagonal(hessian))
+            diag[diag < 10 ** -10] = 10 ** -10
+            precond = sp.diags(1. / diag, 0).tocsr()
+            hessian = safe_dot(precond, hessian)
+            gradient = safe_dot(precond, gradient)
+        p = safe_solve(hessian, -gradient)
+        self.stats = dict(method="Linear solver")
+        return p
 
-
-def newton(value, gradient, hessian, initial, maxit=30, tol=10 ** -5,
-           precondition=True):
-    stats = dict(method="Newton's method",
+class Newton(object):
+    
+    def __init__(self, initial, tol=1e-5, maxit=30, precondition=True):
+        self.initial = initial
+        self.tol = tol
+        self.maxit = maxit
+        self.precondition = precondition
+        
+    def minimize(self, objective):
+        stats = dict(method="Newton's method",
                  iterations=0,
                  objective=[])
-    p = numpy.array(initial, dtype=numpy.float)
-    misfit = value(p)
-    stats['objective'].append(misfit)
-    for iteration in xrange(maxit):
-        grad, hess = gradient(p), hessian(p)
-        if precondition:
-            diag = numpy.abs(safe_diagonal(hess))
-            diag[diag < 10 ** -10] = 10 ** -10
-            precond = scipy.sparse.diags(1. / diag, 0).tocsr()
-            hess = safe_dot(precond, hess)
-            grad = safe_dot(precond, grad)
-        p += safe_solve(hess, -grad)
-        newmisfit = value(p)
-        stats['objective'].append(newmisfit)
-        stats['iterations'] += 1
-        if newmisfit > misfit or abs((newmisfit - misfit) / misfit) < tol:
-            break
-        misfit = newmisfit
-    if iteration == maxit - 1:
-        warnings.warn(
-            'Exited because maximum iterations reached. '
-            + 'Might not have achieved convergence. '
-            + 'Try inscreasing the maximum number of iterations allowed.',
-            RuntimeWarning)
-    return p, stats
+        p = np.array(self.initial)
+        value = objective.value(p)
+        stats['objective'].append(value)
+        for iteration in xrange(self.maxit):
+            grad = objective.gradient(p)
+            hess = objective.hessian(p)
+            if self.precondition:
+                diag = np.abs(safe_diagonal(hess))
+                diag[diag < 10 ** -10] = 10 ** -10
+                precond = sp.diags(1. / diag, 0).tocsr()
+                hess = safe_dot(precond, hess)
+                grad = safe_dot(precond, grad)
+            p = p + safe_solve(hess, -grad)
+            new_value = objective.value(p)
+            stats['objective'].append(new_value)
+            stats['iterations'] += 1
+            if new_value > value or abs((new_value - value)/value) < self.tol:
+                break
+            value = new_value
+        if iteration == self.maxit - 1:
+            warnings.warn(
+                'Exited because maximum iterations reached. '
+                + 'Might not have achieved convergence. '
+                + 'Try inscreasing the maximum number of iterations allowed.',
+                RuntimeWarning)
+        self.stats = stats
+        return p
+    
+    
+class LevMarq(object):
+    
+    def __init__(self, initial, tol=1e-5, maxit=30, maxsteps=20, lamb=10,
+                 dlamb=2, precondition=True):
+        self.initial = initial
+        self.tol = tol
+        self.maxit = maxit
+        self.precondition = precondition
+        self.maxsteps = maxsteps
+        self.lamb = lamb
+        self.dlamb = dlamb
+        
+    def minimize(self, objective):
+        stats = dict(method="Newton's method",
+                 iterations=0,
+                 objective=[])
+        p = np.array(self.initial)
+        value = objective.value(p)
+        stats['objective'].append(value)
+        for iteration in xrange(self.maxit):
+            grad = objective.gradient(p)
+            hess = objective.hessian(p)
+            if self.precondition:
+                diag = np.abs(safe_diagonal(hess))
+                diag[diag < 10 ** -10] = 10 ** -10
+                precond = sp.diags(1. / diag, 0).tocsr()
+                hess = safe_dot(precond, hess)
+                grad = safe_dot(precond, grad)
+            p = p + safe_solve(hess, -grad)
+            new_value = objective.value(p)
+            stats['objective'].append(new_value)
+            stats['iterations'] += 1
+            if new_value > value or abs((new_value - value)/value) < self.tol:
+                break
+            value = new_value
+        if iteration == self.maxit - 1:
+            warnings.warn(
+                'Exited because maximum iterations reached. '
+                + 'Might not have achieved convergence. '
+                + 'Try inscreasing the maximum number of iterations allowed.',
+                RuntimeWarning)
+        self.stats = stats
+        return p
+    
+    
+        
+class ScipyOptimizer(object):
+    def __init__(self, method, **kwargs):
+        self.method = self._is_valid(method)
+        self.args = kwargs
+        
+    def _is_valid(self, method):
+        return method
+    
+    def minimize(self, objective):
+        pass    
+
+
+
+
+
+
+
+
+
+
 
 
 def levmarq(value, gradient, hessian, initial, maxit=30, maxsteps=20, lamb=10,

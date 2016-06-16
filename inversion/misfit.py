@@ -1,128 +1,76 @@
 from __future__ import division
 from future.builtins import super, range, object
-from future.utils import with_metaclass
-import copy
-from abc import ABCMeta, abstractmethod
+import hashlib
 import numpy as np
-import scipy.sparse
 
 from fatiando.utils import safe_dot
 
-from .base import FitMixin, Objective
-from .cache import CachedMethod
 
-
-class NonLinearMisfit(FitMixin, Objective):
-
-    def __init__(self, nparams, config=None):
-        super().__init__(nparams, islinear=False)
-        self.p_ = None
-        self.stats_ = None
-        if config is None:
-            config = dict(method='levmarq', initial=np.zeros(nparams))
-        self._config = config
-        self.set_cache()
-
-    @abstractmethod
-    def predict(self):
-        pass
-
-    def set_cache(self):
-        self.predict = CachedMethod(self, 'predict', optional=['p'])
-        if hasattr(self, 'jacobian'):
-            self.jacobian = CachedMethod(self, 'jacobian')
-
-    def copy(self, deep=False):
-        obj = super().copy(deep)
-        # Need to reset the cache because the CachedMethod in the copy is
-        # holding an instance of the original object.
-        obj.set_cache()
-        return obj
-
-    def _make_partials(self, *args, **kwargs):
-        data = args[-1]
-        args = args[:-1]
-        weights = kwargs.get('weights', None)
-        if weights is not None:
-            if weights.ndim == 1:
-                kwargs['weights'] = scipy.sparse.diags(weights, format='csr')
-        def value(p):
-            return self.value(p, data, *args, **kwargs)
-        def gradient(p):
-            return self.gradient(p, data, *args, **kwargs)
-        def hessian(p):
-            return self.hessian(p, data, *args, **kwargs)
-        return value, gradient, hessian
-
-    def value(self, p, data, *args, **kwargs):
-        weights = kwargs.get('weights', None)
-        pred = self.predict(*args, p=p)
-        if weights is None:
-            value = np.linalg.norm(data - pred)**2
+class L2NormMisfit(object):
+    def __init__(self, data, predict, islinear, jacobian=None, weights=None,
+                 jacobian_cache=None):
+        self.data = data
+        self.predict = predict
+        self.jacobian = jacobian
+        self.weights = weights
+        self.islinear = islinear
+        self.cache = {'predict': {'hash':None, 'value': None},
+                      'jacobian': {'hash':None, 'value': jacobian_cache}}
+        
+    def from_cache(self, p, func):
+        if func == 'jacobian' and self.islinear:
+            if self.cache[func]['value'] is None:
+                self.cache[func]['value'] = getattr(self, func)(p)
         else:
-            r = data - pred
-            value = safe_dot(r.T, safe_dot(weights, r))
-        value *= self.scale
-        return value
-
-    def gradient(self, p, data, *args, **kwargs):
-        weights = kwargs.get('weights', None)
-        jacobian = self.jacobian(*args, p=p)
-        if p is None:
-            residuals = data
+            new_hash = hashlib.sha1(p).hexdigest()
+            old_hash = self.cache[func]['hash']
+            if old_hash is None or old_hash != new_hash:
+                self.cache[func]['hash'] = new_hash
+                self.cache[func]['value'] = getattr(self, func)(p)
+        return self.cache[func]['value']            
+    
+    def value(self, p):
+        pred = self.from_cache(p, 'predict')
+        residuals = self.data - pred
+        if self.weights is None:
+            return np.linalg.norm(residuals, ord=2)**2
         else:
-            residuals = data - self.predict(*args, p=p)
-        if weights is None:
-            gradient = safe_dot(jacobian.T, residuals)
+            return safe_dot(residuals.T, 
+                            safe_dot(self.weights, residuals))
+        
+    def gradient(self, p):
+        jac = self.from_cache(p, 'jacobian')
+        pred = self.from_cache(p, 'predict')
+        residuals = self.data - pred
+        if self.weights is None:
+            grad = -2*safe_dot(jac.T, residuals)
         else:
-            gradient = safe_dot(jacobian.T, safe_dot(weights, residuals))
+            grad = -2*safe_dot(jac.T, 
+                               safe_dot(self.weights, residuals))
+        return self._grad_to_1d(grad)
+    
+    def _grad_to_1d(self, grad):
         # Check if the gradient isn't a one column matrix
-        if len(gradient.shape) > 1:
+        if len(grad.shape) > 1:
             # Need to convert it to a 1d array so that hell won't break
             # loose
-            gradient = np.array(gradient).ravel()
-        gradient *= -2*self.scale
-        return gradient
-
-    def hessian(self, p, data, *args, **kwargs):
-        weights = kwargs.get('weights', None)
-        jacobian = self.jacobian(*args, p=p)
-        if weights is None:
-            hessian = safe_dot(jacobian.T, jacobian)
+            grad = np.array(grad).ravel()
+        return grad
+    
+    def gradient_at_null(self):
+        assert self.islinear, 'Can only calculate gradient at the null vector for linear misfits'
+        jac = self.from_cache(None, 'jacobian')
+        if self.weights is None:
+            grad = -2*safe_dot(jac.T, self.data)
         else:
-            hessian = safe_dot(jacobian.T, safe_dot(weights, jacobian))
-        hessian *= 2*self.scale
-        return hessian
-
-    def score(self, *args):
-        data = args[-1]
-        pred = self.predict(*args[:-1])
-        u = ((data - pred)**2).sum()
-        v = ((data - data.mean())**2).sum()
-        return 1 - u/v
-
-    def fit_reweighted(self, *args, **kwargs):
-        iterations = kwargs.get('iterations', 10)
-        tol = kwargs.get('tol', 1e-8)
-        data = args[-1]
-        self.fit(*args)
-        for i in range(iterations):
-            residuals = np.abs(data - self.predict(*args[:-1]))
-            residuals[residuals < tol] = tol
-            weights = 1/residuals
-            self.fit(*args, weights=weights)
-        return self
-
-
-class LinearMisfit(NonLinearMisfit):
-
-    def __init__(self, nparams, config=None):
-        if config is None:
-            config = dict(method='linear')
-        super().__init__(nparams=nparams, config=config)
-        self.islinear = True
-
-    def set_cache(self):
-        self.predict = CachedMethod(self, 'predict', optional=['p'])
-        if hasattr(self, 'jacobian'):
-            self.jacobian = CachedMethod(self, 'jacobian', ignored=['p'])
+            grad = -2*safe_dot(jac.T, 
+                               safe_dot(self.weights, self.data))
+        return self._grad_to_1d(grad)        
+    
+    def hessian(self, p):
+        jac = self.from_cache(p, 'jacobian')
+        if self.weights is None:
+            return 2*safe_dot(jac.T, jac)
+        else:
+            return 2*safe_dot(jac.T, 
+                               safe_dot(self.weights, jac))
