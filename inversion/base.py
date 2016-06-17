@@ -10,7 +10,9 @@ from .misfit import L2NormMisfit
 
 class NonLinearModel(with_metaclass(ABCMeta)):
 
-    def __init__(self, nparams, misfit='L2NormMisfit', optimizer='Nelder-Mead', regularization=None):
+    def __init__(self, nparams, misfit='L2NormMisfit', optimizer='Nelder-Mead',
+                 regularization=None, scale=1):
+        self.scale = scale
         self.nparams = nparams
         self.islinear = False
         self.p_ = None
@@ -26,13 +28,16 @@ class NonLinearModel(with_metaclass(ABCMeta)):
         "Return data predicted by self.p_"
         pass
 
-    def config(self, optimizer=None, misfit=None, regularization=None):
+    def config(self, optimizer=None, misfit=None, regularization=None,
+               scale=None):
         if optimizer is not None:
             self._set_optimizer(optimizer)
         if misfit is not None:
             self._set_misfit(misfit)
         if regularization is not None:
             self._set_regularization(regularization)
+        if scale is not None:
+            self.scale = scale
         return self
 
 
@@ -73,10 +78,10 @@ class NonLinearModel(with_metaclass(ABCMeta)):
         if hasattr(self, 'jacobian'):
             misfit_args['jacobian'] = self._make_partial(args, 'jacobian')
         misfit = self.misfit(**misfit_args)
-        if self.regularization is None or not self.regularization:
-            objective = misfit
-        else:
-            objective = Objective([[1, misfit]] + self.regularization)
+        components = [[self.scale, misfit]]
+        if self.regularization is not None:
+            components.extend(self.regularization)
+        objective = Objective(components)
         self.p_ = self.optimizer.minimize(objective) # the estimated parameter vector
         return self
 
@@ -97,8 +102,10 @@ class NonLinearModel(with_metaclass(ABCMeta)):
 
 
 class LinearModel(NonLinearModel):
-    def __init__(self, nparams, misfit='L2NormMisfit', optimizer='linear'):
-        super().__init__(nparams, misfit=misfit, optimizer=optimizer)
+    def __init__(self, nparams, misfit='L2NormMisfit', optimizer='linear',
+                 regularization=None, scale=1):
+        super().__init__(nparams, misfit=misfit, optimizer=optimizer,
+                         regularization=regularization, scale=scale)
         self.islinear = True
 
 
