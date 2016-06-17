@@ -5,13 +5,11 @@ from abc import ABCMeta, abstractmethod
 import numpy as np
 import scipy.sparse as sp
 
-from sklearn.base import BaseEstimator
-
 from .optimization import LinearOptimizer
 from .misfit import L2NormMisfit
 
 
-class NonLinearModel(with_metaclass(ABCMeta), BaseEstimator):
+class NonLinearModel(with_metaclass(ABCMeta)):
 
     def __init__(self, misfit='L2NormMisfit', optimizer='Nelder-Mead',
                  regularization=None, scale=1):
@@ -115,7 +113,7 @@ class NonLinearModel(with_metaclass(ABCMeta), BaseEstimator):
 
 
 
-class LinearModel(NonLinearModel, BaseEstimator):
+class LinearModel(NonLinearModel):
     def __init__(self, misfit='L2NormMisfit', optimizer='linear',
                  regularization=None, scale=1):
         super().__init__(misfit=misfit, optimizer=optimizer,
