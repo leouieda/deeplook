@@ -3,6 +3,7 @@ from future.builtins import super, range, object
 from future.utils import with_metaclass
 from abc import ABCMeta, abstractmethod
 import numpy as np
+import scipy.sparse as sp
 
 from .optimization import LinearOptimizer
 from .misfit import L2NormMisfit
@@ -98,6 +99,18 @@ class NonLinearModel(with_metaclass(ABCMeta)):
         else:
             assert False, "Unknown scorer '{}'".format(scorer)
 
+    def fit_reweighted(self, *args, **kwargs):
+        iterations = kwargs.pop('iterations', 10)
+        tol = kwargs.pop('tol', 1e-8)
+        data = args[-1]
+        self.fit(*args)
+        for i in range(iterations):
+            residuals = np.abs(data - self.predict(*args[:-1]))
+            residuals[residuals < tol] = tol
+            weights = sp.diags(1/residuals, format='csr')
+            kwargs['weights'] = weights
+            self.fit(*args, **kwargs)
+        return self
 
 
 

@@ -1,30 +1,27 @@
 from __future__ import division
 from future.builtins import super, range, object
 from future.utils import with_metaclass
-import copy
-from abc import ABCMeta, abstractmethod
 import numpy as np
-import scipy.sparse
+import scipy.sparse as sp
 
 from fatiando.utils import safe_dot
 
-from .base import Objective
 
-
-class Damping(Objective):
+class Damping(object):
 
     def __init__(self, nparams):
-        super().__init__(nparams, islinear=True)
-        self.identity = scipy.sparse.identity(nparams).tocsr()
+        self.nparams = nparams
+        self.islinear = True
+        self._identity = sp.identity(nparams).tocsr()
 
     def value(self, p):
-        return self.scale*np.linalg.norm(p)**2
+        return np.linalg.norm(p)**2
 
     def gradient(self, p):
-        if p is None:
-            return 0
-        else:
-            return self.scale*2*p
+        return 2*p
+
+    def gradient_at_null(self):
+        return 0
 
     def hessian(self, p):
-        return (self.scale*2)*self.identity
+        return 2*self._identity
