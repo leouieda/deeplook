@@ -60,7 +60,7 @@ class NonLinearModel(with_metaclass(ABCMeta)):
         "Use the given regularization"
         self.regularization = reguls
 
-    def _make_partial(self, args, func):
+    def make_partial(self, args, func):
         def partial(p):
             backup = self.p_
             self.p_ = p
@@ -72,12 +72,12 @@ class NonLinearModel(with_metaclass(ABCMeta)):
     def fit(self, args, data, weights=None, jacobian=None):
         "Fit the model to the given data"
         misfit_args = dict(data=data,
-                           predict=self._make_partial(args, 'predict'),
+                           predict=self.make_partial(args, 'predict'),
                            weights=weights,
                            islinear=self.islinear,
                            jacobian_cache=jacobian)
         if hasattr(self, 'jacobian'):
-            misfit_args['jacobian'] = self._make_partial(args, 'jacobian')
+            misfit_args['jacobian'] = self.make_partial(args, 'jacobian')
         misfit = self.misfit(**misfit_args)
         components = [[self.scale, misfit]]
         if self.regularization is not None:
