@@ -1,3 +1,4 @@
+from __future__ import division
 import numpy as np
 import numpy.testing as npt
 from fatiando.utils import contaminate
@@ -6,11 +7,8 @@ from .. import LinearModel, Damping, \
 
 
 # Make a test inversion using the simplest model possible: fitting a straight
-# line. Add damping regularization to test if that works as well.
+# line.
 class Regression(LinearModel):
-
-    def __init__(self, damping=0):
-        self.damping = damping
 
     def predict(self, x):
         a, b = self.p_
@@ -22,14 +20,27 @@ class Regression(LinearModel):
         A[:, 1] = 1
         return A
 
-    def fit(self, x, y, weights=None):
-        regul = None
+    def fit(self, x, y, weights=None, jacobian=None):
+        misfit = self.make_misfit(data=y, args=[x], weights=weights,
+                                  jacobian=jacobian)
+        self.p_ = self.optimizer.minimize(misfit)
+        self.residuals_ = y - self.predict(x)
+        return self
+
+
+# Add damping regularization to test if that works as well.
+class RegressionDamped(Regression):
+
+    def __init__(self, damping=0):
+        self.damping = damping
+
+    def fit(self, x, y, weights=None, jacobian=None):
+        misfit = self.make_misfit(data=y, args=[x], weights=weights,
+                                  jacobian=jacobian)
+        regul = []
         if self.damping > 0:
-            regul = [[self.damping, Damping(nparams=2)]]
-        obj = self.make_objective(data=y,
-                                  args=(x,),
-                                  weights=weights,
-                                  regul=regul)
+            regul.append([self.damping, Damping(nparams=2)])
+        obj = self.make_objective(misfit, regul)
         self.p_ = self.optimizer.minimize(obj)
         self.residuals_ = y - self.predict(x)
         return self
@@ -56,6 +67,7 @@ def test_fit_clean():
     npt.assert_allclose(inv.p_, true_p)
     npt.assert_allclose(inv.residuals_, np.zeros_like(x))
     npt.assert_allclose(inv.residuals_.mean(), 0)
+    npt.assert_allclose(inv.score(x, y), 1)
 
 
 def test_fit_noisy():
@@ -66,6 +78,7 @@ def test_fit_noisy():
     npt.assert_allclose(inv.p_, true_p)
     npt.assert_allclose(inv.residuals_.std(), error)
     npt.assert_allclose(inv.residuals_.mean(), 0)
+    npt.assert_allclose(inv.score(x, y), 1)
 
 
 def test_fit_outlier():
@@ -74,6 +87,7 @@ def test_fit_outlier():
     inv.fit_reweighted(x, y_outlier)
     npt.assert_allclose(inv.predict(x), y)
     npt.assert_allclose(inv.p_, true_p)
+    npt.assert_allclose(inv.score(x, y), 1)
     # The biggest residuals should be on the outliers in order
     largest = np.argsort(inv.residuals_)
     assert largest[-1] == 70
@@ -87,12 +101,13 @@ def test_fit_damped():
     # This tests if adding damping doesn't break the existing code, not really
     # if it gives the right results. Need an example that actually needs
     # regularization for this.
-    inv = Regression(damping=1e-10)
+    inv = RegressionDamped(damping=1e-10)
     inv.fit(x, y_noisy)
     npt.assert_allclose(inv.predict(x), y)
     npt.assert_allclose(inv.p_, true_p)
     npt.assert_allclose(inv.residuals_.std(), error)
     npt.assert_allclose(inv.residuals_.mean(), 0)
+    npt.assert_allclose(inv.score(x, y), 1)
 
 
 def test_optimizers():
@@ -103,6 +118,7 @@ def test_optimizers():
         npt.assert_allclose(inv.p_, true_p)
         npt.assert_allclose(inv.residuals_, np.zeros_like(x))
         npt.assert_allclose(inv.residuals_.mean(), 0)
+        npt.assert_allclose(inv.score(x, y), 1)
     initial = [5, 100]
     fit_n_test(Newton(initial=initial))
     fit_n_test(LevMarq(initial=initial))
@@ -110,3 +126,24 @@ def test_optimizers():
     fit_n_test(ACOR(bounds=[-1000, 1000], nparams=2))
     fit_n_test(ScipyOptimizer('Nelder-Mead', x0=initial))
     fit_n_test(ScipyOptimizer('BFGS', x0=initial))
+
+
+def test_jacobian_warm_start():
+    "Pass a pre-computed Jacobian to fit"
+    A = np.ones((x.size, 2))
+    A[:, 0] = x
+    inv = Regression()
+    inv.fit(x, y, jacobian=A)
+    npt.assert_allclose(inv.predict(x), y)
+    npt.assert_allclose(inv.p_, true_p)
+    npt.assert_allclose(inv.residuals_, np.zeros_like(x))
+    npt.assert_allclose(inv.residuals_.mean(), 0)
+    npt.assert_allclose(inv.score(x, y), 1)
+    # If the jacobian is divided by 2, the estimated parameters should be half
+    # the true value.  All the rest should be the same.
+    inv.fit(x, y, jacobian=A*0.5)
+    npt.assert_allclose(inv.predict(x), y)
+    npt.assert_allclose(inv.p_, true_p/2)
+    npt.assert_allclose(inv.residuals_, np.zeros_like(x))
+    npt.assert_allclose(inv.residuals_.mean(), 0)
+    npt.assert_allclose(inv.score(x, y), 1)

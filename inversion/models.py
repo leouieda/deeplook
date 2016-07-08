@@ -5,98 +5,76 @@ from abc import ABCMeta, abstractmethod
 import numpy as np
 import scipy.sparse as sp
 
-from .optimization import LinearOptimizer
+from .optimization import LinearOptimizer, ScipyOptimizer
 from .misfit import L2NormMisfit
 
 
 class NonLinearModel(with_metaclass(ABCMeta)):
 
-    def __init__(self, misfit=None, optimizer='Nelder-Mead',
-                 regularization=None, scale=1):
-        self.scale = scale
-        self.islinear = False
+
+    def __init__(self, optimizer, misfit=None):
+        self.optimizer = optimizer
+        if misfit is None:
+            self.misfit = L2NormMisfit
+        else:
+            self.misfit = misfit
         self.p_ = None
-        self.regularization = None
-        self.misfit = None
-        self.optimizer = None
-        self.config(misfit=misfit,
-                    optimizer=optimizer,
-                    regularization=regularization)
+        self.custom_regularization = None
 
     @abstractmethod
     def predict(self, args):
         "Return data predicted by self.p_"
         pass
 
-    def config(self, optimizer=None, misfit=None, regularization=None,
-               scale=None):
+    def config(self, optimizer=None, misfit=None, regularization=None):
         if optimizer is not None:
-            self._set_optimizer(optimizer)
+            self.optimizer = optimizer
         if misfit is not None:
-            self._set_misfit(misfit)
+            self.misfit = misfit
         if regularization is not None:
-            self._set_regularization(regularization)
-        if scale is not None:
-            self.scale = scale
+            self.custom_regularization = regularization
         return self
 
 
-    def _set_optimizer(self, optimizer):
-        "Configure the optimization"
-        if optimizer == 'linear':
-            self.optimizer = LinearOptimizer()
-        else:
-            self.optimizer = optimizer
-
-    def _set_misfit(self, misfit):
-        "Pass a different misfit function"
-        if misfit == 'L2NormMisfit':
-            self.misfit = L2NormMisfit
-        else:
-            self.misfit = misfit
-
-    def _set_regularization(self, reguls):
-        "Use the given regularization"
-        self.regularization = reguls
-
-    def make_partial(self, args, func):
-        def partial(p):
-            backup = self.p_
-            self.p_ = p
-            res = getattr(self, func)(*args)
-            self.p_ = backup
-            return res
-        return partial
-
-    def fit(self, args, data, weights=None, jacobian=None):
+    def make_misfit(self, data, args, weights=None, jacobian=None):
         "Fit the model to the given data"
+        def make_partial(func):
+            def partial(p):
+                backup = self.p_
+                self.p_ = p
+                res = getattr(self, func)(*args)
+                self.p_ = backup
+                return res
+            return partial
         misfit_args = dict(data=data,
-                           predict=self.make_partial(args, 'predict'),
+                           predict=make_partial('predict'),
                            weights=weights,
-                           islinear=self.islinear,
                            jacobian_cache=jacobian)
         if hasattr(self, 'jacobian'):
-            misfit_args['jacobian'] = self.make_partial(args, 'jacobian')
-        misfit = self.misfit(**misfit_args)
-        components = [[self.scale, misfit]]
-        if self.regularization is not None:
-            components.extend(self.regularization)
-        objective = Objective(components)
-        self.p_ = self.optimizer.minimize(objective) # the estimated parameter vector
-        return self
+            misfit_args['jacobian'] = make_partial('jacobian')
+        return self.misfit(**misfit_args)
+
+    def make_objective(self, misfit, regularization):
+        "Fit the model to the given data"
+        if not isinstance(misfit, list):
+            misfit = [[1, misfit]]
+        components = misfit + regularization
+        if self.custom_regularization is not None:
+            components.extend(self.custom_regularization)
+        return Objective(components)
 
     def score(self, *args, **kwargs):
+        scorer = kwargs.get('scorer', 'R2')
+        assert scorer in ['R2', 'L2'], "Unknown scorer '{}'".format(scorer)
         data = args[-1]
         pred = self.predict(*args[:-1])
-        scorer = kwargs.get('scorer', 'R2')
         if scorer == 'L2':
-            return np.linalg.norm(data - pred)**2
+            score = np.linalg.norm(data - pred)**2
         elif scorer == 'R2':
             u = ((data - pred)**2).sum()
             v = ((data - data.mean())**2).sum()
-            return 1 - u/v
-        else:
-            assert False, "Unknown scorer '{}'".format(scorer)
+            score = 1 - u/v
+        return score
 
     def fit_reweighted(self, *args, **kwargs):
         iterations = kwargs.pop('iterations', 10)
@@ -122,6 +100,10 @@ class LinearModel(NonLinearModel):
 
 
 class Objective(object):
+    """
+    Objective function composed of a sum of components
+    """
+
     def __init__(self, components):
         self.components = components
 

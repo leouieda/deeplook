@@ -1,5 +1,5 @@
 from .misfit import L2NormMisfit
-from .base import NonLinearModel, LinearModel
+from .models import NonLinearModel, LinearModel
 from .regularization import Damping, Smoothness, Smoothness1D, \
                             TotalVariation, TotalVariation1D
 from .linear_solver import LinearOptimizer
