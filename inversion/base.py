@@ -11,7 +11,7 @@ from .misfit import L2NormMisfit
 
 class NonLinearModel(with_metaclass(ABCMeta)):
 
-    def __init__(self, misfit='L2NormMisfit', optimizer='Nelder-Mead',
+    def __init__(self, misfit=None, optimizer='Nelder-Mead',
                  regularization=None, scale=1):
         self.scale = scale
         self.islinear = False

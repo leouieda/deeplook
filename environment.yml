@@ -9,10 +9,10 @@ dependencies:
     - future
     - pillow
     - jupyter
-    - nose
     - scikit-learn
-    - pep8=1.6.2
-    - coverage=3.7.1
+    - pep8
+    - coverage
+    - pytest
+    - pytest-cov
     - pip:
-        - coveralls==0.5
         - fatiando==0.4
