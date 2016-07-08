@@ -35,12 +35,14 @@ class Newton(object):
             new_value = objective.value(p)
             stats['objective'].append(new_value)
             stats['iterations'] += 1
-            if new_value > value or abs((new_value - value)/value) < self.tol:
+            stop = (new_value > value
+                    or abs(new_value - value) < self.tol*abs(value))
+            if stop:
                 break
             value = new_value
         if iteration == self.maxit - 1:
             warnings.warn(
-                'Exited because maximum iterations reached. '
+                'Newton optimizer exited because maximum iterations reached. '
                 + 'Might not have achieved convergence. '
                 + 'Try increasing the maximum number of iterations allowed.',
                 RuntimeWarning)
@@ -50,7 +52,7 @@ class Newton(object):
 
 class LevMarq(object):
 
-    def __init__(self, initial, tol=1e-5, maxit=30, maxsteps=20, lamb=10,
+    def __init__(self, initial, tol=1e-5, maxit=30, maxsteps=20, lamb=2,
                  dlamb=2, precondition=True):
         self.initial = initial
         self.tol = tol
@@ -81,34 +83,33 @@ class LevMarq(object):
                 precond = sp.diags(1/diag, 0).tocsr()
                 hess = safe_dot(precond, hess)
                 grad = safe_dot(precond, grad)
-            stagnation = True
             diag = sp.diags(safe_diagonal(hess), 0).tocsr()
+            # Try to take a step
+            took_step = False
             for step in range(self.maxsteps):
                 newp = p + safe_solve(hess + lamb*diag, -grad)
                 newvalue = objective.value(newp)
-                if newvalue >= value:
+                decrease = newvalue < value
+                if not decrease:
                     if lamb < 1e15:
                         lamb = lamb*self.dlamb
                 else:
                     if lamb > 1e-15:
                         lamb = lamb/self.dlamb
-                    stagnation = False
+                    took_step = True
                     break
-            if stagnation:
+            if not took_step:
                 stop = True
                 warnings.warn(
-                    "Exited because couldn't take a step without increasing "
-                    + 'the objective function. '
+                    "LevMarq optimizer exited because couldn't take a step "
+                    + 'without increasing the objective function. '
                     + 'Might not have achieved convergence. '
-                    + 'Try increasing the max number of step attempts allowed.',
+                    + 'Try increasing the max number of step attempts.',
                     RuntimeWarning)
             else:
-                stop = (newvalue > value
-                        or abs((newvalue - value)/value) < self.tol)
+                stop = abs(newvalue - value) < self.tol*abs(value)
                 p = newp
                 value = newvalue
-                # Getting inside here means that I could take a step, so this is
-                # where the yield goes.
                 stats['objective'].append(value)
                 stats['iterations'] += 1
                 stats['step_attempts'].append(step + 1)
@@ -117,7 +118,7 @@ class LevMarq(object):
                 break
         if iteration == self.maxit - 1:
             warnings.warn(
-                'Exited because maximum iterations reached. '
+                'LevMarq optmizer exited because maximum iterations reached. '
                 + 'Might not have achieved convergence. '
                 + 'Try increasing the maximum number of iterations allowed.',
                 RuntimeWarning)
@@ -128,7 +129,7 @@ class LevMarq(object):
 class SteepestDescent(object):
 
     def __init__(self, initial, maxit=1000, linesearch=True, maxsteps=30,
-                 beta=0.1, tol=10**-5):
+                 beta=0.1, tol=1e-5):
         self.initial = initial
         self.maxit = maxit
         self.linesearch = linesearch
@@ -149,34 +150,40 @@ class SteepestDescent(object):
         if self.linesearch:
             stats['step_attempts'].append(0)
         alpha = 1e-4  # This is a mystic parameter of the Armijo rule
-        stagnation = False
         for iteration in range(self.maxit):
             grad = objective.gradient(p)
             if self.linesearch:
                 # Calculate now to avoid computing inside the loop
-                gradnorm = np.linalg.norm(grad) ** 2
-                stagnation = True
+                gradnorm = np.linalg.norm(grad)**2
                 # Determine the best step size
+                took_step = False
                 for i in range(self.maxsteps):
                     stepsize = self.beta**i
                     newp = p - stepsize*grad
                     newvalue = objective.value(newp)
-                    if newvalue - value < alpha*stepsize*gradnorm:
-                        stagnation = False
+                    decreased = newvalue < value
+                    good_step = newvalue - value < alpha*stepsize*gradnorm
+                    if decreased and good_step:
+                        took_step = True
                         break
             else:
                 newp = p - grad
                 newvalue = objective.value(newp)
-            if stagnation:
+                decreased = newvalue < value
+                if decreased:
+                    took_step = True
+                else:
+                    took_step = False
+            if not took_step:
                 stop = True
                 warnings.warn(
-                    "Exited because couldn't take a step without increasing "
-                    + 'the objective function. '
+                    "SteepestDescent optimizer exited because couldn't take a"
+                    + " step without increasing the objective function. "
                     + 'Might not have achieved convergence. '
                     + 'Try increasing the max number of step attempts allowed.',
                     RuntimeWarning)
             else:
-                stop = abs((newvalue - value)/value) < self.tol
+                stop = abs(newvalue - value) < self.tol*abs(value)
                 p = newp
                 value = newvalue
                 stats['objective'].append(value)
@@ -187,8 +194,8 @@ class SteepestDescent(object):
                 break
         if iteration == self.maxit - 1:
             warnings.warn(
-                'Exited because maximum iterations reached. '
-                + 'Might not have achieved convergence. '
+                'SteepestDescent optimizer exited because maximum iterations '
+                + 'reached. Might not have achieved convergence. '
                 + 'Try increasing the maximum number of iterations allowed.',
                 RuntimeWarning)
         self.stats = stats

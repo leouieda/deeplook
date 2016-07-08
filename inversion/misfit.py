@@ -6,38 +6,32 @@ import numpy as np
 from fatiando.utils import safe_dot
 
 
-class L2NormMisfit(object):
-    def __init__(self, data, predict, islinear, jacobian=None, weights=None,
-                 jacobian_cache=None):
+class L2Norm(object):
+    def __init__(self, data, predict, jacobian=None, weights=None):
         self.data = data
         self.predict = predict
         self.jacobian = jacobian
         self.weights = weights
-        self.islinear = islinear
         self.cache = {'predict': {'hash':None, 'value': None},
-                      'jacobian': {'hash':None, 'value': jacobian_cache}}
-        
+                      'jacobian': {'hash':None, 'value': None}}
+
     def from_cache(self, p, func):
-        if func == 'jacobian' and self.islinear:
-            if self.cache[func]['value'] is None:
-                self.cache[func]['value'] = getattr(self, func)(p)
-        else:
-            new_hash = hashlib.sha1(p).hexdigest()
-            old_hash = self.cache[func]['hash']
-            if old_hash is None or old_hash != new_hash:
-                self.cache[func]['hash'] = new_hash
-                self.cache[func]['value'] = getattr(self, func)(p)
-        return self.cache[func]['value']            
-    
+        new_hash = hashlib.sha1(p).hexdigest()
+        old_hash = self.cache[func]['hash']
+        if old_hash is None or old_hash != new_hash:
+            self.cache[func]['hash'] = new_hash
+            self.cache[func]['value'] = getattr(self, func)(p)
+        return self.cache[func]['value']
+
     def value(self, p):
         pred = self.from_cache(p, 'predict')
         residuals = self.data - pred
         if self.weights is None:
-            return np.linalg.norm(residuals, ord=2)**2
+            return np.linalg.norm(residuals)**2
         else:
-            return safe_dot(residuals.T, 
+            return safe_dot(residuals.T,
                             safe_dot(self.weights, residuals))
-        
+
     def gradient(self, p):
         jac = self.from_cache(p, 'jacobian')
         pred = self.from_cache(p, 'predict')
@@ -45,10 +39,10 @@ class L2NormMisfit(object):
         if self.weights is None:
             grad = -2*safe_dot(jac.T, residuals)
         else:
-            grad = -2*safe_dot(jac.T, 
+            grad = -2*safe_dot(jac.T,
                                safe_dot(self.weights, residuals))
         return self._grad_to_1d(grad)
-    
+
     def _grad_to_1d(self, grad):
         # Check if the gradient isn't a one column matrix
         if len(grad.shape) > 1:
@@ -56,21 +50,40 @@ class L2NormMisfit(object):
             # loose
             grad = np.array(grad).ravel()
         return grad
-    
-    def gradient_at_null(self):
-        assert self.islinear, 'Can only calculate gradient at the null vector for linear misfits'
-        jac = self.from_cache(None, 'jacobian')
-        if self.weights is None:
-            grad = -2*safe_dot(jac.T, self.data)
-        else:
-            grad = -2*safe_dot(jac.T, 
-                               safe_dot(self.weights, self.data))
-        return self._grad_to_1d(grad)        
-    
+
     def hessian(self, p):
         jac = self.from_cache(p, 'jacobian')
         if self.weights is None:
             return 2*safe_dot(jac.T, jac)
         else:
-            return 2*safe_dot(jac.T, 
+            return 2*safe_dot(jac.T,
                                safe_dot(self.weights, jac))
+
+
+class L2NormLinear(L2Norm):
+
+    def __init__(self, data, predict, jacobian=None, weights=None,
+                 jacobian_cache=None):
+        super().__init__(data, predict, jacobian, weights)
+        self.cache['jacobian']['value'] =  jacobian_cache
+
+    def from_cache(self, p, func):
+        # For linear models, the Jacobian doesn't depend on p. So if there is
+        # already a value on the cache, return that and don't even check.
+        if func == 'jacobian':
+            if self.cache['jacobian']['value'] is None:
+                self.cache['jacobian']['value'] = self.jacobian(p)
+            return self.cache['jacobian']['value']
+        else:
+            return super().from_cache(p, func)
+
+    def gradient_at_null(self):
+        # Need the gradient evaluate at the null vector for the linear least
+        # squares solver.
+        jac = self.from_cache(None, 'jacobian')
+        if self.weights is None:
+            grad = -2*safe_dot(jac.T, self.data)
+        else:
+            grad = -2*safe_dot(jac.T,
+                               safe_dot(self.weights, self.data))
+        return self._grad_to_1d(grad)

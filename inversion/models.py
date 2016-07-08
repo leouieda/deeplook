@@ -5,17 +5,16 @@ from abc import ABCMeta, abstractmethod
 import numpy as np
 import scipy.sparse as sp
 
-from .optimization import LinearOptimizer, ScipyOptimizer
-from .misfit import L2NormMisfit
+from .linear_solver import LinearOptimizer
+from .misfit import L2Norm, L2NormLinear
 
 
 class NonLinearModel(with_metaclass(ABCMeta)):
 
-
     def __init__(self, optimizer, misfit=None):
         self.optimizer = optimizer
         if misfit is None:
-            self.misfit = L2NormMisfit
+            self.misfit = L2Norm
         else:
             self.misfit = misfit
         self.p_ = None
@@ -34,7 +33,6 @@ class NonLinearModel(with_metaclass(ABCMeta)):
         if regularization is not None:
             self.custom_regularization = regularization
         return self
-
 
     def make_misfit(self, data, args, weights=None, jacobian=None):
         "Fit the model to the given data"
@@ -90,13 +88,9 @@ class NonLinearModel(with_metaclass(ABCMeta)):
         return self
 
 
-
 class LinearModel(NonLinearModel):
-    def __init__(self, misfit='L2NormMisfit', optimizer='linear',
-                 regularization=None, scale=1):
-        super().__init__(misfit=misfit, optimizer=optimizer,
-                         regularization=regularization, scale=scale)
-        self.islinear = True
+    def __init__(self):
+        super().__init__(optimizer=LinearOptimizer(), misfit=L2NormLinear)
 
 
 class Objective(object):

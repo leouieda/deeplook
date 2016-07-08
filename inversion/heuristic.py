@@ -6,7 +6,7 @@ import numpy as np
 
 class ACOR(object):
     def __init__(self, bounds, nparams, nants=None, archive_size=None,
-                 maxit=1000, diverse=0.5, evap=0.85, seed=None):
+                 maxit=2000, diverse=0.5, evap=0.85, seed=None):
         self.nparams = nparams
         # Set the defaults for number of ants and archive size
         if nants is None:
@@ -71,15 +71,20 @@ class ACOR(object):
                     mean = archive[pdf][i]
                     std = (evap / (archive_size - 1)) * np.sum(
                         abs(p[i] - archive[pdf][i]) for p in archive)
-                    # 3. Sample the pdf until the samples are in bounds
-                    for atempt in range(100):
-                        ant[i] = np.random.normal(mean, std)
-                        if bounds.size == 2:
-                            low, high = bounds
-                        else:
-                            low, high = bounds[i]
-                        if ant[i] >= low and ant[i] <= high:
-                            break
+                    # if std is zero, this means that all solutions in the
+                    # archive for this parameter are the same.
+                    if std == 0:
+                        ant[i] = mean
+                    else:
+                        # 3. Sample the pdf until the samples are in bounds
+                        for atempt in range(100):
+                            ant[i] = np.random.normal(mean, std)
+                            if bounds.size == 2:
+                                low, high = bounds
+                            else:
+                                low, high = bounds[i]
+                            if ant[i] >= low and ant[i] <= high:
+                                break
                 pheromone = objective.value(ant)
                 # Place the new estimate in the archive
                 place = np.searchsorted(trail, pheromone)
