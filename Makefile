@@ -8,3 +8,7 @@ coverage:
 
 pep8:
 	pep8 $(PEP8ARGS) inversion
+
+clean:
+	find . -name "*.pyc" -exec rm -v {} \;
+	rm -rvf build dist MANIFEST fatiando.egg-info __pycache__ .coverage .cache
