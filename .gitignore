@@ -4,3 +4,4 @@
 *.swp
 prof.txt
 inversion/.cache
+.coverage
