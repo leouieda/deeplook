@@ -23,7 +23,7 @@ before_install:
     - source ci/install-miniconda.sh
     # Create a conda env to install required libraries
     - conda update --yes conda
-    - conda create -f environment$PYTHON.yml
+    - conda env create -f environment$PYTHON.yml
     - source activate deeplook$PYTHON
 
 install:
