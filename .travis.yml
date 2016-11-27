@@ -1,0 +1,42 @@
+language: generic
+
+sudo: false
+
+notifications:
+    email: false
+
+matrix:
+    include:
+        - os: linux
+          env: PYTHON=3 COVERAGE=true
+        - os: linux
+          env: PYTHON=2 COVERAGE=false
+        - os: osx
+          env: PYTHON=3 COVERAGE=false
+        - os: osx
+          env: PYTHON=2 COVERAGE=false
+
+before_install:
+    # Get Miniconda from Continuum
+    # Need to source the script to set the PATH variable in this environment
+    # (not the scripts environment)
+    - source ci/install-miniconda.sh
+    # Create a conda env to install required libraries
+    - conda update --yes conda
+    - conda create -f environment$PYTHON.yml
+    - source activate deeplook$PYTHON
+
+install:
+    - if [ "$COVERAGE" == "true" ]; then pip install coveralls; fi
+    # Show installed pkg information for postmortem diagnostic
+    - conda list
+    # Package and install
+    - python setup.py sdist --formats=gztar
+    - pip install dist/*.tar.gz
+
+script:
+    - bash ci/run-tests.sh
+    - make pep8
+
+after_success:
+    - bash ci/submit-coverage.sh

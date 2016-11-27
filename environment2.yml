@@ -1,0 +1,22 @@
+name: deeplook2
+channels:
+    - defaults
+    - conda-forge
+dependencies:
+    - python=2.7
+    - pip
+    - numpy
+    - scipy
+    - future
+    - matplotlib
+    - scikit-learn
+    - pep8
+    - coverage
+    - pytest
+    - pytest-cov
+    - sphinx
+    - sphinx_rtd_theme
+    - jupyter
+    - fatiando
+    - pip:
+        - sphinx-gallery
