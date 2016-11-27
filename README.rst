@@ -1,8 +1,5 @@
-========
 DeepLook
 ========
-
-----
 
 **Framework for building inverse problems.**
 
