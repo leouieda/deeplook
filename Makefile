@@ -1,15 +1,13 @@
 # Build, package, test, and clean
 
 TESTDIR=tmp-test-dir-with-unique-name
-PEP8ARGS=--show-source --ignore=W503,E226,E241 --exclude=_version.py
 
 help:
 	@echo "Commands:"
 	@echo ""
 	@echo "    develop       install in editable mode"
 	@echo "    test          run the test suite (including doctests)"
-	@echo "    pep8          check for PEP8 style compliance"
-	@echo "    pep8-stats    print a summary of the PEP8 check"
+	@echo "    check         run the flake8 linter and style checker"
 	@echo "    coverage      calculate test coverage"
 	@echo "    clean         clean up build and generated files"
 	@echo ""
@@ -29,11 +27,8 @@ coverage:
 	cd $(TESTDIR); python -c "import deeplook; deeplook.test(coverage=True)"
 	rm -r $(TESTDIR)
 
-pep8:
-	pep8 $(PEP8ARGS) deeplook setup.py
-
-pep8-stats:
-	pep8 $(PEP8ARGS) --statistics -qq deeplook setup.py
+check:
+	flake8 deeplook setup.py
 
 clean:
 	find . -name "*.so" -exec rm -v {} \;

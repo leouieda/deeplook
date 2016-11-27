@@ -36,7 +36,7 @@ install:
 
 script:
     - bash ci/run-tests.sh
-    - make pep8
+    - make check
 
 after_success:
     - bash ci/submit-coverage.sh

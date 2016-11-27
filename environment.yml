@@ -10,7 +10,7 @@ dependencies:
     - future
     - matplotlib
     - scikit-learn
-    - pep8
+    - flake8
     - coverage
     - pytest
     - pytest-cov
