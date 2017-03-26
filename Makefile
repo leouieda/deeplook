@@ -41,7 +41,8 @@ lint:
 clean:
 	find . -name "*.so" -exec rm -v {} \;
 	find . -name "*.pyc" -exec rm -v {} \;
-	rm -rvf build dist MANIFEST *.egg-info __pycache__ .coverage .cache
+	find . -name "__pycache__" -type d -print0 | xargs -r0 -- rm -rv
+	rm -rvf build dist MANIFEST *.egg-info .coverage .cache
 	rm -rvf $(TESTDIR) $(COVDIR)
 
 package:
