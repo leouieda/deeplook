@@ -5,14 +5,11 @@ DeepLook: Solvers for inverse problems
 # flake8: noqa
 # noqa: F401
 from __future__ import absolute_import
-from .misfit import L2Norm, L2NormLinear
-from .models import NonLinearModel, LinearModel
-from .regularization import Damping, Smoothness, Smoothness1D, \
-                            TotalVariation, TotalVariation1D
-from .linear_solver import LinearOptimizer
-from .gradient_descent import Newton, LevMarq, SteepestDescent
-from .heuristic import ACOR
-from .scipy_optimizer import ScipyOptimizer
+
+try:
+    import pytest
+except ImportError:
+    pytest = None
 
 
 __version__ = '0.1a0'
@@ -32,17 +29,19 @@ def test(doctest=True, verbose=False):
     * verbose : bool
         If ``True``, will print extra information during the test run.
 
-    Returns:
+    Raises:
 
-    * exit_code : int
-        The exit code for the test run. If ``0``, then all tests pass.
+    * ``AssertionError`` if pytest returns a non-zero error code indicating
+      that some tests have failed.
 
     """
-    import pytest
+    assert pytest is not None, "Must have 'pytest' installed to run tests."
     args = []
     if verbose:
         args.append('-v')
     if doctest:
         args.append('--doctest-modules')
-    args.append('--pyargs deeplook')
-    return pytest.main(args)
+    args.append('--pyargs')
+    args.append('deeplook')
+    status = pytest.main(args)
+    assert status == 0, "Some tests have failed."

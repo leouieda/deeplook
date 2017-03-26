@@ -1,3 +1,8 @@
+"""
+Package and install the library.
+
+Uses setuptools.
+"""
 from setuptools import setup, find_packages
 # import versioneer
 
