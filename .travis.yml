@@ -23,16 +23,6 @@ env:
         - PYTHON=3.4
         - PYTHON=3.5
         - PYTHON=3.6 COVERAGE=true
-matrix:
-    include:
-        - os: linux
-          env: PYTHON=3 COVERAGE=true
-        - os: linux
-          env: PYTHON=2 COVERAGE=false
-        - os: osx
-          env: PYTHON=3 COVERAGE=false
-        - os: osx
-          env: PYTHON=2 COVERAGE=false
 
 before_install:
     # Get Miniconda from Continuum
