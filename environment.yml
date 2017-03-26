@@ -3,7 +3,7 @@ channels:
     - defaults
     - conda-forge
 dependencies:
-    - python=3.5
+    - python=3.6
     - pip
     - numpy
     - scipy
@@ -11,11 +11,11 @@ dependencies:
     - matplotlib
     - scikit-learn
     - flake8
+    - pylint
     - coverage
     - pytest
     - pytest-cov
     - sphinx
     - sphinx_rtd_theme
     - jupyter
-    - pip:
-        - sphinx-gallery
+    - sphinx-gallery

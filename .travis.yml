@@ -5,6 +5,24 @@ sudo: false
 notifications:
     email: false
 
+# Only build pushes from the master branch. PRs are always built.
+branches:
+    only:
+        - master
+
+os:
+    - linux
+
+env:
+    global:
+        - COVERAGE=false
+        - BUILD_DOCS=true
+
+    matrix:
+        - PYTHON=2.7
+        - PYTHON=3.4
+        - PYTHON=3.5
+        - PYTHON=3.6 COVERAGE=true
 matrix:
     include:
         - os: linux
@@ -21,22 +39,27 @@ before_install:
     # Need to source the script to set the PATH variable in this environment
     # (not the scripts environment)
     - source ci/install-miniconda.sh
-    # Create a conda env to install required libraries
     - conda update --yes conda
-    - if [ "$PYTHON" == "2" ]; then conda env create -f environment2.yml; else conda env create -f environment.yml; fi
-    - source activate deeplook$PYTHON
-
-install:
+    # Create a conda env to install required libraries
+    - conda create -n testenv --yes pip python=$PYTHON
+    - source activate testenv
+    # Install dependencies
+    - conda install --yes --file requirements.txt -c conda-forge
+    - conda install --yes --file requirements-dev.txt -c conda-forge
     - if [ "$COVERAGE" == "true" ]; then pip install coveralls; fi
     # Show installed pkg information for postmortem diagnostic
     - conda list
+
+install:
     # Package and install
     - python setup.py sdist --formats=gztar
     - pip install dist/*.tar.gz
 
 script:
-    - bash ci/run-tests.sh
-    - make check
+    - if [ "$COVERAGE" == "true" ]; then make coverage; else make test; fi
+    - make pep8
+    - make lint
+    - if [ "$BUILD_DOCS" == "true" ]; then make -C doc; fi
 
 after_success:
-    - bash ci/submit-coverage.sh
+    - if [ "$COVERAGE" == "true" ]; then coveralls; fi
