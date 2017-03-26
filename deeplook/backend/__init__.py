@@ -2,8 +2,8 @@ from __future__ import absolute_import, division, print_function
 import os
 
 
-_backends = {'numpy'}
-_default_backend = "numpy"
+_backends = {'array'}
+_default_backend = "array'"
 _env_variable = "DEEPLOOK_BACKEND"
 
 
@@ -26,7 +26,7 @@ def backend():
 
 
 _BACKEND = get_backend()
-if _BACKEND == 'numpy':
-    from .numpy_backend import *
+if _BACKEND == 'array':
+    from .array_backend import *
 else:
     raise Exception("Invalid backend {}.".format(_BACKEND)
